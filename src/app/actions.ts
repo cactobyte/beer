@@ -1,0 +1,266 @@
+"use server";
+
+import { randomInt } from "node:crypto";
+import bcrypt from "bcryptjs";
+import { and, asc, eq, ne } from "drizzle-orm";
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { z } from "zod";
+import { db, schema } from "@/db";
+import { createSession, destroySession, requireUser } from "@/lib/auth";
+import { DRINK_TYPES, EMOJIS, type DrinkType } from "@/lib/drinks";
+import { requireGroup } from "@/lib/queries";
+import * as v from "@/lib/validation";
+import type { FormState } from "@/lib/validation";
+
+const { users, groups, groupMembers, drinks } = schema;
+
+/** Postgres unique_violation. Drizzle wraps driver errors, so check the cause chain too. */
+function isUniqueViolation(e: unknown): boolean {
+  if (typeof e !== "object" || e === null) return false;
+  if ("code" in e && e.code === "23505") return true;
+  return "cause" in e && isUniqueViolation(e.cause);
+}
+
+// Compared against when the username doesn't exist, so response time doesn't leak which usernames exist
+const DUMMY_HASH = bcrypt.hashSync("not-a-real-password", 10);
+
+/** Only allow same-site relative redirects. */
+function safeNext(next: FormDataEntryValue | null) {
+  return typeof next === "string" && next.startsWith("/") && !next.startsWith("//") ? next : "/";
+}
+
+// ─── Auth ────────────────────────────────────────────────────────────────────
+
+const signupSchema = z.object({
+  username: v.username,
+  displayName: v.displayName,
+  password: v.password,
+});
+
+export async function signup(_: FormState, form: FormData): Promise<FormState> {
+  const parsed = signupSchema.safeParse(Object.fromEntries(form));
+  if (!parsed.success) return { error: v.firstError(parsed.error) };
+  const { username, displayName, password } = parsed.data;
+
+  let userId: string;
+  try {
+    const [user] = await db
+      .insert(users)
+      .values({
+        username,
+        displayName,
+        passwordHash: await bcrypt.hash(password, 10),
+        emoji: EMOJIS[randomInt(EMOJIS.length)],
+      })
+      .returning({ id: users.id });
+    userId = user.id;
+  } catch (e) {
+    if (isUniqueViolation(e)) return { error: "That username is taken" };
+    throw e;
+  }
+
+  await createSession(userId);
+  redirect(safeNext(form.get("next")));
+}
+
+export async function login(_: FormState, form: FormData): Promise<FormState> {
+  const username = String(form.get("username") ?? "").trim().toLowerCase();
+  const password = String(form.get("password") ?? "");
+  const [user] = await db.select().from(users).where(eq(users.username, username)).limit(1);
+  const ok = await bcrypt.compare(password, user?.passwordHash ?? DUMMY_HASH);
+  if (!user || !ok) return { error: "Wrong username or password" };
+
+  await createSession(user.id);
+  redirect(safeNext(form.get("next")));
+}
+
+export async function logout() {
+  await destroySession();
+  redirect("/login");
+}
+
+// ─── Profile ─────────────────────────────────────────────────────────────────
+
+export async function updateProfile(_: FormState, form: FormData): Promise<FormState> {
+  const me = await requireUser();
+  const parsed = z
+    .object({ displayName: v.displayName, emoji: z.enum(EMOJIS as [string, ...string[]]) })
+    .safeParse(Object.fromEntries(form));
+  if (!parsed.success) return { error: v.firstError(parsed.error) };
+
+  await db.update(users).set(parsed.data).where(eq(users.id, me.id));
+  revalidatePath("/", "layout");
+  return { ok: "Saved" };
+}
+
+export async function changePassword(_: FormState, form: FormData): Promise<FormState> {
+  const me = await requireUser();
+  const current = String(form.get("current") ?? "");
+  const parsed = v.password.safeParse(form.get("password"));
+  if (!parsed.success) return { error: v.firstError(parsed.error) };
+
+  const [row] = await db.select({ hash: users.passwordHash }).from(users).where(eq(users.id, me.id));
+  if (!(await bcrypt.compare(current, row.hash))) return { error: "Current password is wrong" };
+
+  await db.update(users).set({ passwordHash: await bcrypt.hash(parsed.data, 10) }).where(eq(users.id, me.id));
+  // Log out every other device
+  await db.delete(schema.sessions).where(eq(schema.sessions.userId, me.id));
+  await createSession(me.id);
+  return { ok: "Password changed" };
+}
+
+// ─── Groups ──────────────────────────────────────────────────────────────────
+
+// No 0/O/1/I/L so codes survive being read out loud in a loud bar
+const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+function newInviteCode() {
+  return Array.from({ length: 6 }, () => CODE_ALPHABET[randomInt(CODE_ALPHABET.length)]).join("");
+}
+
+export async function createGroup(_: FormState, form: FormData): Promise<FormState> {
+  const me = await requireUser();
+  const parsed = z
+    .object({ name: v.groupName, timezone: v.timezone.catch("Europe/London") })
+    .safeParse(Object.fromEntries(form));
+  if (!parsed.success) return { error: v.firstError(parsed.error) };
+
+  let groupId: string | undefined;
+  for (let attempt = 0; attempt < 5 && !groupId; attempt++) {
+    try {
+      groupId = await db.transaction(async (tx) => {
+        const [g] = await tx
+          .insert(groups)
+          .values({ ...parsed.data, inviteCode: newInviteCode(), createdBy: me.id })
+          .returning({ id: groups.id });
+        await tx.insert(groupMembers).values({ groupId: g.id, userId: me.id, role: "owner" });
+        return g.id;
+      });
+    } catch (e) {
+      if (!isUniqueViolation(e)) throw e; // invite code collision → retry
+    }
+  }
+  if (!groupId) return { error: "Couldn't create group, try again" };
+
+  revalidatePath("/", "layout");
+  redirect(`/g/${groupId}`);
+}
+
+export async function joinGroup(_: FormState, form: FormData): Promise<FormState> {
+  const code = String(form.get("code") ?? "")
+    .trim()
+    .toUpperCase();
+  const me = await requireUser(`/join/${encodeURIComponent(code)}`);
+  const [group] = await db.select({ id: groups.id }).from(groups).where(eq(groups.inviteCode, code)).limit(1);
+  if (!group) return { error: "No group with that code" };
+
+  await db.insert(groupMembers).values({ groupId: group.id, userId: me.id }).onConflictDoNothing();
+  revalidatePath("/", "layout");
+  redirect(`/g/${group.id}`);
+}
+
+export async function leaveGroup(groupId: string) {
+  const me = await requireUser();
+  const { role } = await requireGroup(groupId, me.id);
+
+  await db.transaction(async (tx) => {
+    await tx.delete(groupMembers).where(and(eq(groupMembers.groupId, groupId), eq(groupMembers.userId, me.id)));
+    if (role !== "owner") return;
+    // Hand ownership to the longest-standing member, or delete the empty group
+    const [heir] = await tx
+      .select({ userId: groupMembers.userId })
+      .from(groupMembers)
+      .where(eq(groupMembers.groupId, groupId))
+      .orderBy(asc(groupMembers.joinedAt))
+      .limit(1);
+    if (heir) {
+      await tx
+        .update(groupMembers)
+        .set({ role: "owner" })
+        .where(and(eq(groupMembers.groupId, groupId), eq(groupMembers.userId, heir.userId)));
+    } else {
+      await tx.delete(groups).where(eq(groups.id, groupId));
+    }
+  });
+
+  revalidatePath("/", "layout");
+  redirect("/groups");
+}
+
+async function requireOwner(groupId: string) {
+  const me = await requireUser();
+  const { role } = await requireGroup(groupId, me.id);
+  if (role !== "owner") throw new Error("Only the group owner can do that");
+  return me;
+}
+
+export async function updateGroup(groupId: string, _: FormState, form: FormData): Promise<FormState> {
+  await requireOwner(groupId);
+  const parsed = z.object({ name: v.groupName, timezone: v.timezone }).safeParse(Object.fromEntries(form));
+  if (!parsed.success) return { error: v.firstError(parsed.error) };
+
+  await db.update(groups).set(parsed.data).where(eq(groups.id, groupId));
+  revalidatePath("/", "layout");
+  return { ok: "Saved" };
+}
+
+export async function regenerateInvite(groupId: string) {
+  await requireOwner(groupId);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      await db.update(groups).set({ inviteCode: newInviteCode() }).where(eq(groups.id, groupId));
+      break;
+    } catch (e) {
+      if (!isUniqueViolation(e)) throw e;
+    }
+  }
+  revalidatePath(`/g/${groupId}`, "layout");
+}
+
+export async function removeMember(groupId: string, userId: string) {
+  const me = await requireOwner(groupId);
+  if (userId === me.id) throw new Error("Use 'leave group' instead");
+  await db
+    .delete(groupMembers)
+    .where(and(eq(groupMembers.groupId, groupId), eq(groupMembers.userId, userId), ne(groupMembers.role, "owner")));
+  revalidatePath(`/g/${groupId}`, "layout");
+}
+
+// ─── Drinks ──────────────────────────────────────────────────────────────────
+
+export type LogResult = { error?: string; loggedId?: string; label?: string; at?: number } | undefined;
+
+export async function logDrink(_: LogResult, form: FormData): Promise<LogResult> {
+  const me = await requireUser();
+  const parsed = v.logDrink.safeParse(Object.fromEntries(form));
+  if (!parsed.success) return { error: v.firstError(parsed.error) };
+  const { type, quantity, note, drunkAt } = parsed.data;
+  const info = DRINK_TYPES[type as DrinkType];
+
+  const [row] = await db
+    .insert(drinks)
+    .values({
+      userId: me.id,
+      type,
+      quantity,
+      note,
+      drunkAt,
+      units: Math.round(info.units * quantity * 10) / 10,
+    })
+    .returning({ id: drinks.id });
+
+  revalidatePath("/", "layout");
+  return {
+    loggedId: row.id,
+    label: `${quantity > 1 ? `${quantity}× ` : ""}${info.label} ${info.emoji}`,
+    // Lets the client tell two identical logs apart
+    at: Date.now(),
+  };
+}
+
+export async function deleteDrink(drinkId: string) {
+  const me = await requireUser();
+  if (!/^[0-9a-f-]{36}$/i.test(drinkId)) return;
+  await db.delete(drinks).where(and(eq(drinks.id, drinkId), eq(drinks.userId, me.id)));
+  revalidatePath("/", "layout");
+}

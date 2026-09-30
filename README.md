@@ -1,36 +1,37 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Sesh 🍺
 
-## Getting Started
+Drinks leaderboard for you and your mates. Log drinks in one tap, climb the board.
 
-First, run the development server:
+- **Groups** — private, join with a 6-character code or invite link
+- **Leaderboard** — tonight / week / month / year / all time, ranked by drinks then units. "Tonight" rolls over at 6am in the group's timezone
+- **Feed** — live-ish (refreshes every 20s) list of what everyone's having
+- **Profiles** — totals, units, nights out, best night, drink-of-choice breakdown, history
+- Drinks belong to the person, not the group — one night counts on every board you're in
+- Installable to the home screen (PWA manifest)
+
+## Stack
+
+Next.js 16 (App Router, server actions) · Postgres (Neon on Vercel) · Drizzle ORM · Tailwind v4.
+Auth is username + password (bcrypt) with DB-backed sessions in an httpOnly cookie.
+
+## Local dev
 
 ```bash
+cp .env.example .env.local   # point DATABASE_URL at a Postgres 14+
+npm install
+npm run db:migrate
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Schema changes
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Edit `src/db/schema.ts`, then `npm run db:generate` and commit the new file in `drizzle/`.
+`npm run build` runs pending migrations before `next build`, so every Vercel deploy migrates the DB first.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Deploy (Vercel)
 
-## Learn More
+1. Import the repo in Vercel.
+2. Project → **Storage** → **Create Database** → **Neon** → connect to the project (sets `DATABASE_URL`).
+3. Deploy.
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Drink responsibly.

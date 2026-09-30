@@ -1,0 +1,120 @@
+import { relations, sql } from "drizzle-orm";
+import {
+  check,
+  index,
+  integer,
+  pgTable,
+  primaryKey,
+  real,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
+
+export const users = pgTable(
+  "users",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    username: text("username").notNull(),
+    displayName: text("display_name").notNull(),
+    passwordHash: text("password_hash").notNull(),
+    emoji: text("emoji").notNull().default("🍺"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("users_username_idx").on(t.username)],
+);
+
+export const sessions = pgTable(
+  "sessions",
+  {
+    // sha256 of the cookie token; the raw token never touches the DB
+    id: text("id").primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("sessions_user_idx").on(t.userId)],
+);
+
+export const groups = pgTable(
+  "groups",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    inviteCode: text("invite_code").notNull(),
+    // IANA zone used to decide when "tonight" / "this week" start
+    timezone: text("timezone").notNull().default("Europe/London"),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("groups_invite_code_idx").on(t.inviteCode)],
+);
+
+export const groupMembers = pgTable(
+  "group_members",
+  {
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["owner", "member"] }).notNull().default("member"),
+    joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.groupId, t.userId] }),
+    index("group_members_user_idx").on(t.userId),
+  ],
+);
+
+// Drinks belong to a person, not a group: one night out counts on every
+// leaderboard you're part of.
+export const drinks = pgTable(
+  "drinks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    quantity: integer("quantity").notNull().default(1),
+    // Total alcohol units for this entry (quantity × per-drink units), frozen
+    // at log time so catalogue changes never rewrite history.
+    units: real("units").notNull(),
+    note: text("note"),
+    drunkAt: timestamp("drunk_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("drinks_user_drunk_at_idx").on(t.userId, t.drunkAt),
+    check("drinks_quantity_range", sql`${t.quantity} between 1 and 20`),
+  ],
+);
+
+export const usersRelations = relations(users, ({ many }) => ({
+  memberships: many(groupMembers),
+  drinks: many(drinks),
+}));
+
+export const groupsRelations = relations(groups, ({ many }) => ({
+  members: many(groupMembers),
+}));
+
+export const groupMembersRelations = relations(groupMembers, ({ one }) => ({
+  group: one(groups, { fields: [groupMembers.groupId], references: [groups.id] }),
+  user: one(users, { fields: [groupMembers.userId], references: [users.id] }),
+}));
+
+export const drinksRelations = relations(drinks, ({ one }) => ({
+  user: one(users, { fields: [drinks.userId], references: [users.id] }),
+}));
+
+export type User = typeof users.$inferSelect;
+export type Group = typeof groups.$inferSelect;
+export type Drink = typeof drinks.$inferSelect;
