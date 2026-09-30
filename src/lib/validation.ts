@@ -62,3 +62,9 @@ export type FormState = { error?: string; ok?: string } | undefined;
 export function firstError(err: z.ZodError) {
   return err.issues[0]?.message ?? "Invalid input";
 }
+
+export const messageBody = z
+  .string()
+  .trim()
+  .min(1, "Say something")
+  .max(500, "Max 500 characters");

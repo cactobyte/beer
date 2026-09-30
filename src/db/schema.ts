@@ -97,6 +97,25 @@ export const drinks = pgTable(
   ],
 );
 
+export const messages = pgTable(
+  "messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    body: text("body").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("messages_group_created_at_idx").on(t.groupId, t.createdAt),
+    check("messages_body_length", sql`char_length(${t.body}) between 1 and 500`),
+  ],
+);
+
 export const usersRelations = relations(users, ({ many }) => ({
   memberships: many(groupMembers),
   drinks: many(drinks),
@@ -118,3 +137,4 @@ export const drinksRelations = relations(drinks, ({ one }) => ({
 export type User = typeof users.$inferSelect;
 export type Group = typeof groups.$inferSelect;
 export type Drink = typeof drinks.$inferSelect;
+export type Message = typeof messages.$inferSelect;

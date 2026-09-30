@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt, sql, type SQL } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { db, schema } from "@/db";
 import type { Period } from "./drinks";
@@ -195,4 +195,80 @@ export async function getMyTonight(userId: string, tz: string) {
     .from(drinks)
     .where(and(eq(drinks.userId, userId), sql`${drinks.drunkAt} >= ${periodStart("tonight", tz)}`));
   return row.n;
+}
+
+// ─── Chat ────────────────────────────────────────────────────────────────────
+
+export async function isMember(groupId: string, userId: string) {
+  if (!/^[0-9a-f-]{36}$/i.test(groupId)) return false;
+  const [row] = await db
+    .select({ one: sql`1` })
+    .from(groupMembers)
+    .where(and(eq(groupMembers.groupId, groupId), eq(groupMembers.userId, userId)))
+    .limit(1);
+  return Boolean(row);
+}
+
+const messageColumns = {
+  id: schema.messages.id,
+  body: schema.messages.body,
+  createdAt: schema.messages.createdAt,
+  userId: users.id,
+  username: users.username,
+  displayName: users.displayName,
+  emoji: users.emoji,
+};
+
+export type ChatMessage = {
+  id: string;
+  body: string;
+  createdAt: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  emoji: string;
+};
+
+function toChatMessage(m: { createdAt: Date } & Omit<ChatMessage, "createdAt">): ChatMessage {
+  return { ...m, createdAt: m.createdAt.toISOString() };
+}
+
+/**
+ * Messages in a group, oldest first. `after` returns everything newer (for
+ * polling, inclusive so same-millisecond messages aren't missed; the client
+ * dedupes by id). `before` pages backwards through history.
+ */
+export async function getMessages(groupId: string, opts: { after?: Date; before?: Date; limit?: number } = {}) {
+  const limit = opts.limit ?? 50;
+  const { messages } = schema;
+  const conds = [eq(messages.groupId, groupId)];
+  if (opts.after) conds.push(gte(messages.createdAt, opts.after));
+  if (opts.before) conds.push(lt(messages.createdAt, opts.before));
+
+  const rows = await db
+    .select(messageColumns)
+    .from(messages)
+    .innerJoin(users, eq(users.id, messages.userId))
+    .where(and(...conds))
+    // Polling wants the oldest new messages first; history wants the newest page
+    .orderBy(opts.after ? asc(messages.createdAt) : desc(messages.createdAt))
+    .limit(limit);
+
+  if (!opts.after) rows.reverse();
+  return rows.map(toChatMessage);
+}
+
+export async function getLatestMessage(groupId: string) {
+  const [row] = await getMessages(groupId, { limit: 1 });
+  return row ?? null;
+}
+
+export async function getMessageById(id: string) {
+  const [row] = await db
+    .select(messageColumns)
+    .from(schema.messages)
+    .innerJoin(users, eq(users.id, schema.messages.userId))
+    .where(eq(schema.messages.id, id))
+    .limit(1);
+  return row ? toChatMessage(row) : null;
 }

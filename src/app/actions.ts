@@ -9,7 +9,7 @@ import { z } from "zod";
 import { db, schema } from "@/db";
 import { createSession, destroySession, requireUser } from "@/lib/auth";
 import { DRINK_TYPES, EMOJIS, type DrinkType } from "@/lib/drinks";
-import { requireGroup } from "@/lib/queries";
+import { getMessageById, isMember, requireGroup, type ChatMessage } from "@/lib/queries";
 import * as v from "@/lib/validation";
 import type { FormState } from "@/lib/validation";
 
@@ -263,4 +263,30 @@ export async function deleteDrink(drinkId: string) {
   if (!/^[0-9a-f-]{36}$/i.test(drinkId)) return;
   await db.delete(drinks).where(and(eq(drinks.id, drinkId), eq(drinks.userId, me.id)));
   revalidatePath("/", "layout");
+}
+
+// ─── Chat ────────────────────────────────────────────────────────────────────
+
+export type SendResult = { error?: string; message?: ChatMessage };
+
+export async function sendMessage(groupId: string, body: string): Promise<SendResult> {
+  const me = await requireUser();
+  const parsed = v.messageBody.safeParse(body);
+  if (!parsed.success) return { error: v.firstError(parsed.error) };
+  if (!(await isMember(groupId, me.id))) return { error: "You're not in this group" };
+
+  const [row] = await db
+    .insert(schema.messages)
+    .values({ groupId, userId: me.id, body: parsed.data })
+    .returning({ id: schema.messages.id });
+  const message = await getMessageById(row.id);
+  return message ? { message } : { error: "Couldn't send" };
+}
+
+export async function deleteMessage(messageId: string) {
+  const me = await requireUser();
+  if (!/^[0-9a-f-]{36}$/i.test(messageId)) return;
+  await db
+    .delete(schema.messages)
+    .where(and(eq(schema.messages.id, messageId), eq(schema.messages.userId, me.id)));
 }

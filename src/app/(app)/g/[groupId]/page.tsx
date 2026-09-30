@@ -8,7 +8,8 @@ import { PeriodTabs } from "@/components/PeriodTabs";
 import { RememberGroup } from "@/components/RememberGroup";
 import { requireUser } from "@/lib/auth";
 import { PERIODS, parsePeriod } from "@/lib/drinks";
-import { getGroupFeed, getLeaderboard, getMyTonight, requireGroup } from "@/lib/queries";
+import { timeAgo } from "@/lib/time";
+import { getGroupFeed, getLatestMessage, getLeaderboard, getMyTonight, requireGroup } from "@/lib/queries";
 
 export async function generateMetadata({ params }: PageProps<"/g/[groupId]">) {
   const { groupId } = await params;
@@ -23,10 +24,11 @@ export default async function GroupPage({ params, searchParams }: PageProps<"/g/
   const me = await requireUser(`/g/${groupId}`);
   const { group } = await requireGroup(groupId, me.id);
 
-  const [board, feed, tonight] = await Promise.all([
+  const [board, feed, tonight, lastMessage] = await Promise.all([
     getLeaderboard(group.id, group.timezone, period),
     getGroupFeed(group.id),
     getMyTonight(me.id, group.timezone),
+    getLatestMessage(group.id),
   ]);
 
   return (
@@ -49,6 +51,21 @@ export default async function GroupPage({ params, searchParams }: PageProps<"/g/
           </Link>
         </div>
       </div>
+
+      <Link
+        href={`/g/${group.id}/chat`}
+        className="card flex items-center gap-3 px-4 py-3 transition hover:bg-card-hi"
+      >
+        <span className="text-2xl">💬</span>
+        <span className="min-w-0 flex-1">
+          <span className="block font-semibold">Group chat</span>
+          <span className="block truncate text-sm text-muted">
+            {lastMessage ? `${lastMessage.displayName}: ${lastMessage.body}` : "Start the conversation"}
+          </span>
+        </span>
+        {lastMessage && <span className="shrink-0 text-xs text-dim">{timeAgo(new Date(lastMessage.createdAt))}</span>}
+        <span className="text-dim">→</span>
+      </Link>
 
       <LogDrink tonight={tonight} />
 
