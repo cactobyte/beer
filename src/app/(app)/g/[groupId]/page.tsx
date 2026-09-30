@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AutoRefresh } from "@/components/AutoRefresh";
+import { LiveRefresh } from "@/components/LiveRefresh";
 import { CopyButton } from "@/components/CopyButton";
 import { Feed } from "@/components/Feed";
 import { Leaderboard } from "@/components/Leaderboard";
@@ -40,7 +40,7 @@ export default async function GroupPage({ params, searchParams }: PageProps<"/g/
   return (
     <div className="space-y-5">
       <RememberGroup id={group.id} />
-      <AutoRefresh />
+      <LiveRefresh groupId={group.id} />
 
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">

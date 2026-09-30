@@ -3,6 +3,7 @@ import { leaveGroup, regenerateInvite, removeMember } from "@/app/actions";
 import { Avatar } from "@/components/Avatar";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { CopyButton } from "@/components/CopyButton";
+import { LiveRefresh } from "@/components/LiveRefresh";
 import { requireUser } from "@/lib/auth";
 import { getGroupMembers, requireGroup } from "@/lib/queries";
 import { GroupSettingsForm } from "./form";
@@ -20,6 +21,7 @@ export default async function GroupSettingsPage({ params }: PageProps<"/g/[group
 
   return (
     <div className="space-y-5">
+      <LiveRefresh groupId={group.id} />
       <div>
         <Link href={`/g/${group.id}`} className="text-sm text-muted hover:text-ink">
           ← {group.name}

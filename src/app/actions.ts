@@ -2,7 +2,7 @@
 
 import { randomInt } from "node:crypto";
 import bcrypt from "bcryptjs";
-import { and, asc, eq, inArray, isNull, lte, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, ne, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
@@ -24,6 +24,23 @@ function isUniqueViolation(e: unknown): boolean {
 
 // Compared against when the username doesn't exist, so response time doesn't leak which usernames exist
 const DUMMY_HASH = bcrypt.hashSync("not-a-real-password", 10);
+
+/** Tells open pages in this group to refresh (they poll groups.version). */
+async function touchGroup(groupId: string) {
+  await db
+    .update(groups)
+    .set({ version: sql`${groups.version} + 1` })
+    .where(eq(groups.id, groupId));
+}
+
+/** Same, for every group a user is in (their drinks show in all of them). */
+async function touchUserGroups(userId: string) {
+  const mine = db.select({ id: groupMembers.groupId }).from(groupMembers).where(eq(groupMembers.userId, userId));
+  await db
+    .update(groups)
+    .set({ version: sql`${groups.version} + 1` })
+    .where(inArray(groups.id, mine));
+}
 
 /** Only allow same-site relative redirects. */
 function safeNext(next: FormDataEntryValue | null) {
@@ -90,6 +107,7 @@ export async function updateProfile(_: FormState, form: FormData): Promise<FormS
   if (!parsed.success) return { error: v.firstError(parsed.error) };
 
   await db.update(users).set(parsed.data).where(eq(users.id, me.id));
+  await touchUserGroups(me.id);
   revalidatePath("/", "layout");
   return { ok: "Saved" };
 }
@@ -155,6 +173,7 @@ export async function joinGroup(_: FormState, form: FormData): Promise<FormState
   if (!group) return { error: "No group with that code" };
 
   await db.insert(groupMembers).values({ groupId: group.id, userId: me.id }).onConflictDoNothing();
+  await touchGroup(group.id);
   revalidatePath("/", "layout");
   redirect(`/g/${group.id}`);
 }
@@ -183,6 +202,7 @@ export async function leaveGroup(groupId: string) {
     }
   });
 
+  await touchGroup(groupId);
   revalidatePath("/", "layout");
   redirect("/groups");
 }
@@ -200,6 +220,7 @@ export async function updateGroup(groupId: string, _: FormState, form: FormData)
   if (!parsed.success) return { error: v.firstError(parsed.error) };
 
   await db.update(groups).set(parsed.data).where(eq(groups.id, groupId));
+  await touchGroup(groupId);
   revalidatePath("/", "layout");
   return { ok: "Saved" };
 }
@@ -214,6 +235,7 @@ export async function regenerateInvite(groupId: string) {
       if (!isUniqueViolation(e)) throw e;
     }
   }
+  await touchGroup(groupId);
   revalidatePath(`/g/${groupId}`, "layout");
 }
 
@@ -223,6 +245,7 @@ export async function removeMember(groupId: string, userId: string) {
   await db
     .delete(groupMembers)
     .where(and(eq(groupMembers.groupId, groupId), eq(groupMembers.userId, userId), ne(groupMembers.role, "owner")));
+  await touchGroup(groupId);
   revalidatePath(`/g/${groupId}`, "layout");
 }
 
@@ -262,6 +285,7 @@ export async function logDrink(_: LogResult, form: FormData): Promise<LogResult>
       .onConflictDoNothing();
   }
 
+  await touchUserGroups(me.id);
   revalidatePath("/", "layout");
   return {
     loggedId: row.id,
@@ -272,33 +296,36 @@ export async function logDrink(_: LogResult, form: FormData): Promise<LogResult>
 }
 
 /**
- * Whether `me` may change this drink: it's theirs, or `groupId` is given, they
- * own that group, and the drinker is a member of it.
+ * The drinker's id if `me` may change this drink (it's theirs, or `groupId` is
+ * given, they own that group, and the drinker is a member of it), else null.
  */
 async function canManageDrink(meId: string, drinkId: string, groupId?: string) {
-  if (!/^[0-9a-f-]{36}$/i.test(drinkId)) return false;
+  if (!/^[0-9a-f-]{36}$/i.test(drinkId)) return null;
   const [drink] = await db.select({ userId: drinks.userId }).from(drinks).where(eq(drinks.id, drinkId)).limit(1);
-  if (!drink) return false;
-  if (drink.userId === meId) return true;
-  if (!groupId || !/^[0-9a-f-]{36}$/i.test(groupId)) return false;
+  if (!drink) return null;
+  if (drink.userId === meId) return drink.userId;
+  if (!groupId || !/^[0-9a-f-]{36}$/i.test(groupId)) return null;
   const rows = await db
     .select({ userId: groupMembers.userId, role: groupMembers.role })
     .from(groupMembers)
     .where(and(eq(groupMembers.groupId, groupId), inArray(groupMembers.userId, [meId, drink.userId])));
   const mine = rows.find((r) => r.userId === meId);
-  return mine?.role === "owner" && rows.some((r) => r.userId === drink.userId);
+  return mine?.role === "owner" && rows.some((r) => r.userId === drink.userId) ? drink.userId : null;
 }
 
 export async function deleteDrink(drinkId: string, groupId?: string) {
   const me = await requireUser();
-  if (!(await canManageDrink(me.id, drinkId, groupId))) return;
+  const drinker = await canManageDrink(me.id, drinkId, groupId);
+  if (!drinker) return;
   await db.delete(drinks).where(eq(drinks.id, drinkId));
+  await touchUserGroups(drinker);
   revalidatePath("/", "layout");
 }
 
 export async function editDrink(drinkId: string, groupId: string | undefined, _: FormState, form: FormData): Promise<FormState> {
   const me = await requireUser();
-  if (!(await canManageDrink(me.id, drinkId, groupId))) return { error: "You can't edit that drink" };
+  const drinker = await canManageDrink(me.id, drinkId, groupId);
+  if (!drinker) return { error: "You can't edit that drink" };
   const parsed = v.editDrink.safeParse(Object.fromEntries(form));
   if (!parsed.success) return { error: v.firstError(parsed.error) };
   const { type, quantity, note, drunkAt } = parsed.data;
@@ -313,6 +340,7 @@ export async function editDrink(drinkId: string, groupId: string | undefined, _:
       units: Math.round(DRINK_TYPES[type as DrinkType].units * quantity * 10) / 10,
     })
     .where(eq(drinks.id, drinkId));
+  await touchUserGroups(drinker);
   revalidatePath("/", "layout");
   return { ok: "Saved" };
 }
@@ -345,6 +373,7 @@ export async function startSesh(groupId: string, _: FormState, form: FormData): 
     throw e;
   }
 
+  await touchGroup(groupId);
   revalidatePath(`/g/${groupId}`, "layout");
   redirect(`/g/${groupId}/s/${seshId}`);
 }
@@ -356,6 +385,7 @@ export async function endSesh(groupId: string, seshId: string) {
     .update(seshes)
     .set({ endedAt: new Date() })
     .where(and(eq(seshes.id, seshId), eq(seshes.groupId, groupId), isNull(seshes.endedAt)));
+  await touchGroup(groupId);
   revalidatePath(`/g/${groupId}`, "layout");
 }
 
@@ -367,6 +397,7 @@ export async function renameSesh(groupId: string, seshId: string, _: FormState, 
     .update(seshes)
     .set({ name: parsed.data })
     .where(and(eq(seshes.id, seshId), eq(seshes.groupId, groupId)));
+  await touchGroup(groupId);
   revalidatePath(`/g/${groupId}`, "layout");
   return { ok: "Renamed" };
 }
@@ -375,6 +406,7 @@ export async function renameSesh(groupId: string, seshId: string, _: FormState, 
 export async function deleteSesh(groupId: string, seshId: string) {
   await requireOwner(groupId);
   await db.delete(seshes).where(and(eq(seshes.id, seshId), eq(seshes.groupId, groupId)));
+  await touchGroup(groupId);
   revalidatePath(`/g/${groupId}`, "layout");
   redirect(`/g/${groupId}`);
 }
@@ -404,6 +436,7 @@ export async function assignDrinks(groupId: string, seshId: string | null, drink
       await tx.insert(seshDrinks).values(validIds.map((drinkId) => ({ seshId, drinkId, groupId })));
     }
   });
+  await touchGroup(groupId);
   revalidatePath(`/g/${groupId}`, "layout");
 }
 
@@ -421,6 +454,7 @@ export async function sendMessage(groupId: string, body: string): Promise<SendRe
     .insert(schema.messages)
     .values({ groupId, userId: me.id, body: parsed.data })
     .returning({ id: schema.messages.id });
+  await touchGroup(groupId);
   const message = await getMessageById(row.id);
   return message ? { message } : { error: "Couldn't send" };
 }
@@ -428,7 +462,9 @@ export async function sendMessage(groupId: string, body: string): Promise<SendRe
 export async function deleteMessage(messageId: string) {
   const me = await requireUser();
   if (!/^[0-9a-f-]{36}$/i.test(messageId)) return;
-  await db
+  const [gone] = await db
     .delete(schema.messages)
-    .where(and(eq(schema.messages.id, messageId), eq(schema.messages.userId, me.id)));
+    .where(and(eq(schema.messages.id, messageId), eq(schema.messages.userId, me.id)))
+    .returning({ groupId: schema.messages.groupId });
+  if (gone) await touchGroup(gone.groupId);
 }

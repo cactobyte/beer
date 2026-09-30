@@ -388,3 +388,21 @@ export async function getUnassignedDrinks(groupId: string, days = 14) {
     .orderBy(desc(drinks.drunkAt))
     .limit(100);
 }
+
+/**
+ * Ids of the newest `limit` messages plus the timestamp of the oldest of them,
+ * so polling clients can drop messages deleted inside that window.
+ */
+export async function getRecentMessageIds(groupId: string, limit = 100) {
+  const rows = await db
+    .select({ id: schema.messages.id, createdAt: schema.messages.createdAt })
+    .from(schema.messages)
+    .where(eq(schema.messages.groupId, groupId))
+    .orderBy(desc(schema.messages.createdAt))
+    .limit(limit);
+  return {
+    ids: rows.map((r) => r.id),
+    // null = the window covers the whole history
+    since: rows.length === limit ? rows[rows.length - 1].createdAt.toISOString() : null,
+  };
+}

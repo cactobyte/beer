@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { deleteSesh, endSesh } from "@/app/actions";
-import { AutoRefresh } from "@/components/AutoRefresh";
+import { LiveRefresh } from "@/components/LiveRefresh";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { DrinkPicker } from "@/components/DrinkPicker";
 import { Feed } from "@/components/Feed";
@@ -42,7 +42,7 @@ export default async function SeshPage({ params }: PageProps<"/g/[groupId]/s/[se
 
   return (
     <div className="space-y-5">
-      {live && <AutoRefresh />}
+      <LiveRefresh groupId={group.id} />
       <div>
         <Link href={`/g/${group.id}`} className="text-sm text-muted hover:text-ink">
           ← {group.name}

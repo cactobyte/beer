@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getUser } from "@/lib/auth";
-import { getMessages, isMember } from "@/lib/queries";
+import { getMessages, getRecentMessageIds, isMember } from "@/lib/queries";
 
 function parseDate(v: string | null) {
   if (!v) return undefined;
@@ -16,10 +16,15 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/groups/[grou
   if (!(await isMember(groupId, me.id))) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const params = req.nextUrl.searchParams;
-  const messages = await getMessages(groupId, {
-    after: parseDate(params.get("after")),
-    before: parseDate(params.get("before")),
-    limit: 50,
-  });
-  return NextResponse.json({ messages }, { headers: { "Cache-Control": "no-store" } });
+  const polling = !params.has("before");
+  const [messages, recent] = await Promise.all([
+    getMessages(groupId, {
+      after: parseDate(params.get("after")),
+      before: parseDate(params.get("before")),
+      limit: 50,
+    }),
+    // Polls also carry what still exists, so deletions reach everyone
+    polling ? getRecentMessageIds(groupId) : null,
+  ]);
+  return NextResponse.json({ messages, recent }, { headers: { "Cache-Control": "no-store" } });
 }

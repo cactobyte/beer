@@ -3,6 +3,7 @@
 import { useActionState, useRef, useState, useTransition } from "react";
 import { assignDrinks, deleteDrink, editDrink } from "@/app/actions";
 import { DRINK_TYPES, DRINK_TYPE_KEYS } from "@/lib/drinks";
+import type { FormState } from "@/lib/validation";
 import { FormMessage } from "./FormMessage";
 import { SubmitButton } from "./SubmitButton";
 
@@ -28,7 +29,14 @@ export function DrinkMenu({ drink, groupId, isOwner, seshes = [], currentSeshId 
   const dialog = useRef<HTMLDialogElement>(null);
   const [when, setWhen] = useState("");
   const [pending, start] = useTransition();
-  const [state, action] = useActionState(editDrink.bind(null, drink.id, groupId), undefined);
+  const [state, action] = useActionState(async (prev: FormState, form: FormData) => {
+    const result = await editDrink(drink.id, groupId, prev, form);
+    if (result?.ok) {
+      dialog.current?.close();
+      return undefined;
+    }
+    return result;
+  }, undefined);
 
   function open() {
     setWhen(toLocalInput(new Date(drink.drunkAt)));
@@ -102,7 +110,10 @@ export function DrinkMenu({ drink, groupId, isOwner, seshes = [], currentSeshId 
               disabled={pending}
               onChange={(e) => {
                 const target = e.target.value || null;
-                start(() => assignDrinks(groupId, target, [drink.id]));
+                start(async () => {
+                  await assignDrinks(groupId, target, [drink.id]);
+                  dialog.current?.close();
+                });
               }}
             >
               <option value="">Not in a sesh</option>

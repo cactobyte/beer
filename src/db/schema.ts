@@ -47,6 +47,9 @@ export const groups = pgTable(
     inviteCode: text("invite_code").notNull(),
     // IANA zone used to decide when "tonight" / "this week" start
     timezone: text("timezone").notNull().default("Europe/London"),
+    // Bumped on anything that changes what a member sees (drinks, seshes,
+    // members, chat). Open pages poll it and refresh when it moves.
+    version: integer("version").notNull().default(0),
     createdBy: uuid("created_by")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),

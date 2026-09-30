@@ -61,8 +61,22 @@ export function Chat({ groupId, meId, initial }: { groupId: string; meId: string
     try {
       const res = await fetch(`/api/groups/${groupId}/messages${qs}`, { cache: "no-store" });
       if (!res.ok) return;
-      const { messages: fresh } = (await res.json()) as { messages: ChatMessage[] };
-      setMessages((list) => mergeById(list, fresh));
+      const { messages: fresh, recent } = (await res.json()) as {
+        messages: ChatMessage[];
+        recent: { ids: string[]; since: string | null } | null;
+      };
+      setMessages((list) => {
+        let next = list;
+        if (recent) {
+          // Drop anything in the server's recent window that no longer exists
+          const alive = new Set(recent.ids);
+          const kept = list.filter(
+            (m) => m.pending || m.failed || alive.has(m.id) || (recent.since !== null && m.createdAt < recent.since),
+          );
+          if (kept.length !== list.length) next = kept;
+        }
+        return mergeById(next, fresh);
+      });
     } catch {
       // offline or flaky signal in a pub; next tick will catch up
     }
