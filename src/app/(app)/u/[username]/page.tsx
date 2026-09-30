@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Avatar } from "@/components/Avatar";
-import { DeleteDrinkButton } from "@/components/DeleteDrinkButton";
+import { DrinkMenu } from "@/components/DrinkMenu";
 import { requireUser } from "@/lib/auth";
 import { drinkInfo, formatUnits } from "@/lib/drinks";
 import { getUserByUsername, getUserHistory, getUserStats, sharesGroup } from "@/lib/queries";
@@ -94,7 +94,7 @@ export default async function ProfilePage({ params }: PageProps<"/u/[username]">
                     {d.note && <p className="truncate text-xs text-muted">“{d.note}”</p>}
                   </div>
                   <span className="shrink-0 text-xs text-dim">{timeAgo(d.drunkAt)}</span>
-                  {isMe && <DeleteDrinkButton id={d.id} />}
+                  {isMe && <DrinkMenu drink={{ ...d, displayName: user.displayName }} />}
                 </li>
               );
             })}

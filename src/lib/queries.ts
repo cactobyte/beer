@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, gte, inArray, lt, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lt, sql, type SQL } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { db, schema } from "@/db";
 import type { Period } from "./drinks";
@@ -90,9 +90,16 @@ export async function getGroupFeed(groupId: string, limit = 25) {
       username: users.username,
       displayName: users.displayName,
       emoji: users.emoji,
+      seshId: schema.seshDrinks.seshId,
+      seshName: schema.seshes.name,
     })
     .from(drinks)
     .innerJoin(users, eq(users.id, drinks.userId))
+    .leftJoin(
+      schema.seshDrinks,
+      and(eq(schema.seshDrinks.drinkId, drinks.id), eq(schema.seshDrinks.groupId, groupId)),
+    )
+    .leftJoin(schema.seshes, eq(schema.seshes.id, schema.seshDrinks.seshId))
     .where(inArray(drinks.userId, memberIds))
     .orderBy(desc(drinks.drunkAt))
     .limit(limit);
@@ -271,4 +278,113 @@ export async function getMessageById(id: string) {
     .where(eq(schema.messages.id, id))
     .limit(1);
   return row ? toChatMessage(row) : null;
+}
+
+// ─── Seshes ──────────────────────────────────────────────────────────────────
+
+const { seshes, seshDrinks } = schema;
+
+export async function getLiveSesh(groupId: string) {
+  const [row] = await db
+    .select()
+    .from(seshes)
+    .where(and(eq(seshes.groupId, groupId), isNull(seshes.endedAt)))
+    .limit(1);
+  return row ?? null;
+}
+
+/** Seshes in a group, newest first, with totals. */
+export async function getSeshes(groupId: string, limit = 50) {
+  return db
+    .select({
+      id: seshes.id,
+      name: seshes.name,
+      startedAt: seshes.startedAt,
+      endedAt: seshes.endedAt,
+      drinks: sql<number>`coalesce(sum(${drinks.quantity}), 0)::int`,
+      people: sql<number>`count(distinct ${drinks.userId})::int`,
+    })
+    .from(seshes)
+    .leftJoin(seshDrinks, eq(seshDrinks.seshId, seshes.id))
+    .leftJoin(drinks, eq(drinks.id, seshDrinks.drinkId))
+    .where(eq(seshes.groupId, groupId))
+    .groupBy(seshes.id)
+    .orderBy(desc(seshes.startedAt))
+    .limit(limit);
+}
+
+export type SeshSummary = Awaited<ReturnType<typeof getSeshes>>[number];
+
+/** The sesh, if it belongs to this group; 404s otherwise. */
+export async function requireSesh(groupId: string, seshId: string) {
+  if (!/^[0-9a-f-]{36}$/i.test(seshId)) notFound();
+  const [row] = await db
+    .select()
+    .from(seshes)
+    .where(and(eq(seshes.id, seshId), eq(seshes.groupId, groupId)))
+    .limit(1);
+  if (!row) notFound();
+  return row;
+}
+
+/** Everyone who drank in the sesh, ranked. */
+export async function getSeshLeaderboard(seshId: string) {
+  return db
+    .select({
+      userId: users.id,
+      username: users.username,
+      displayName: users.displayName,
+      emoji: users.emoji,
+      drinks: sql<number>`sum(${drinks.quantity})::int`,
+      units: sql<number>`sum(${drinks.units})::float`,
+      lastDrinkAt: sql<Date | null>`max(${drinks.drunkAt})`.mapWith((v) => (v ? new Date(v) : null)),
+    })
+    .from(seshDrinks)
+    .innerJoin(drinks, eq(drinks.id, seshDrinks.drinkId))
+    .innerJoin(users, eq(users.id, drinks.userId))
+    .where(eq(seshDrinks.seshId, seshId))
+    .groupBy(users.id)
+    .orderBy(desc(sql`sum(${drinks.quantity})`), desc(sql`sum(${drinks.units})`), users.displayName);
+}
+
+const drinkRowColumns = {
+  id: drinks.id,
+  type: drinks.type,
+  quantity: drinks.quantity,
+  units: drinks.units,
+  note: drinks.note,
+  drunkAt: drinks.drunkAt,
+  userId: users.id,
+  username: users.username,
+  displayName: users.displayName,
+  emoji: users.emoji,
+};
+
+export async function getSeshDrinks(seshId: string) {
+  return db
+    .select({ ...drinkRowColumns, seshId: seshDrinks.seshId, seshName: sql<string | null>`null` })
+    .from(seshDrinks)
+    .innerJoin(drinks, eq(drinks.id, seshDrinks.drinkId))
+    .innerJoin(users, eq(users.id, drinks.userId))
+    .where(eq(seshDrinks.seshId, seshId))
+    .orderBy(desc(drinks.drunkAt));
+}
+
+/** Recent drinks by group members that aren't in any of this group's seshes yet. */
+export async function getUnassignedDrinks(groupId: string, days = 14) {
+  const memberIds = db.select({ id: groupMembers.userId }).from(groupMembers).where(eq(groupMembers.groupId, groupId));
+  return db
+    .select({ ...drinkRowColumns, seshId: sql<string | null>`null`, seshName: sql<string | null>`null` })
+    .from(drinks)
+    .innerJoin(users, eq(users.id, drinks.userId))
+    .leftJoin(seshDrinks, and(eq(seshDrinks.drinkId, drinks.id), eq(seshDrinks.groupId, groupId)))
+    .where(
+      and(
+        inArray(drinks.userId, memberIds),
+        isNull(seshDrinks.drinkId),
+        gte(drinks.drunkAt, sql`now() - make_interval(days => ${days})`),
+      ),
+    )
+    .orderBy(desc(drinks.drunkAt))
+    .limit(100);
 }

@@ -116,6 +116,48 @@ export const messages = pgTable(
   ],
 );
 
+// A named night out within a group ("The restaurant", "Pres at Dave's").
+// At most one is live (ended_at null) per group at a time.
+export const seshes = pgTable(
+  "seshes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("seshes_group_started_at_idx").on(t.groupId, t.startedAt),
+    uniqueIndex("seshes_one_live_per_group_idx").on(t.groupId).where(sql`${t.endedAt} is null`),
+  ],
+);
+
+// Which sesh a drink counts towards, per group. Drinks belong to people, so
+// the same drink can sit in one sesh in each group its drinker is in.
+export const seshDrinks = pgTable(
+  "sesh_drinks",
+  {
+    seshId: uuid("sesh_id")
+      .notNull()
+      .references(() => seshes.id, { onDelete: "cascade" }),
+    drinkId: uuid("drink_id")
+      .notNull()
+      .references(() => drinks.id, { onDelete: "cascade" }),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.seshId, t.drinkId] }),
+    uniqueIndex("sesh_drinks_group_drink_idx").on(t.groupId, t.drinkId),
+  ],
+);
+
 export const usersRelations = relations(users, ({ many }) => ({
   memberships: many(groupMembers),
   drinks: many(drinks),
@@ -138,3 +180,4 @@ export type User = typeof users.$inferSelect;
 export type Group = typeof groups.$inferSelect;
 export type Drink = typeof drinks.$inferSelect;
 export type Message = typeof messages.$inferSelect;
+export type Sesh = typeof seshes.$inferSelect;

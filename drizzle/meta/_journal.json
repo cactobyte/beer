@@ -15,6 +15,13 @@
       "when": 1790773124563,
       "tag": "0001_chat",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790774077633,
+      "tag": "0002_seshes",
+      "breakpoints": true
     }
   ]
 }

@@ -2,18 +2,18 @@
 
 import { randomInt } from "node:crypto";
 import bcrypt from "bcryptjs";
-import { and, asc, eq, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, ne } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import { createSession, destroySession, requireUser } from "@/lib/auth";
 import { DRINK_TYPES, EMOJIS, type DrinkType } from "@/lib/drinks";
-import { getMessageById, isMember, requireGroup, type ChatMessage } from "@/lib/queries";
+import { getMessageById, isMember, requireGroup, requireSesh, type ChatMessage } from "@/lib/queries";
 import * as v from "@/lib/validation";
 import type { FormState } from "@/lib/validation";
 
-const { users, groups, groupMembers, drinks } = schema;
+const { users, groups, groupMembers, drinks, seshes, seshDrinks } = schema;
 
 /** Postgres unique_violation. Drizzle wraps driver errors, so check the cause chain too. */
 function isUniqueViolation(e: unknown): boolean {
@@ -249,6 +249,19 @@ export async function logDrink(_: LogResult, form: FormData): Promise<LogResult>
     })
     .returning({ id: drinks.id });
 
+  // Count it towards every live sesh (started before the drink) in the drinker's groups
+  const live = await db
+    .select({ seshId: seshes.id, groupId: seshes.groupId })
+    .from(seshes)
+    .innerJoin(groupMembers, and(eq(groupMembers.groupId, seshes.groupId), eq(groupMembers.userId, me.id)))
+    .where(and(isNull(seshes.endedAt), lte(seshes.startedAt, drunkAt)));
+  if (live.length) {
+    await db
+      .insert(seshDrinks)
+      .values(live.map((l) => ({ ...l, drinkId: row.id })))
+      .onConflictDoNothing();
+  }
+
   revalidatePath("/", "layout");
   return {
     loggedId: row.id,
@@ -258,11 +271,140 @@ export async function logDrink(_: LogResult, form: FormData): Promise<LogResult>
   };
 }
 
-export async function deleteDrink(drinkId: string) {
+/**
+ * Whether `me` may change this drink: it's theirs, or `groupId` is given, they
+ * own that group, and the drinker is a member of it.
+ */
+async function canManageDrink(meId: string, drinkId: string, groupId?: string) {
+  if (!/^[0-9a-f-]{36}$/i.test(drinkId)) return false;
+  const [drink] = await db.select({ userId: drinks.userId }).from(drinks).where(eq(drinks.id, drinkId)).limit(1);
+  if (!drink) return false;
+  if (drink.userId === meId) return true;
+  if (!groupId || !/^[0-9a-f-]{36}$/i.test(groupId)) return false;
+  const rows = await db
+    .select({ userId: groupMembers.userId, role: groupMembers.role })
+    .from(groupMembers)
+    .where(and(eq(groupMembers.groupId, groupId), inArray(groupMembers.userId, [meId, drink.userId])));
+  const mine = rows.find((r) => r.userId === meId);
+  return mine?.role === "owner" && rows.some((r) => r.userId === drink.userId);
+}
+
+export async function deleteDrink(drinkId: string, groupId?: string) {
   const me = await requireUser();
-  if (!/^[0-9a-f-]{36}$/i.test(drinkId)) return;
-  await db.delete(drinks).where(and(eq(drinks.id, drinkId), eq(drinks.userId, me.id)));
+  if (!(await canManageDrink(me.id, drinkId, groupId))) return;
+  await db.delete(drinks).where(eq(drinks.id, drinkId));
   revalidatePath("/", "layout");
+}
+
+export async function editDrink(drinkId: string, groupId: string | undefined, _: FormState, form: FormData): Promise<FormState> {
+  const me = await requireUser();
+  if (!(await canManageDrink(me.id, drinkId, groupId))) return { error: "You can't edit that drink" };
+  const parsed = v.editDrink.safeParse(Object.fromEntries(form));
+  if (!parsed.success) return { error: v.firstError(parsed.error) };
+  const { type, quantity, note, drunkAt } = parsed.data;
+
+  await db
+    .update(drinks)
+    .set({
+      type,
+      quantity,
+      note,
+      drunkAt,
+      units: Math.round(DRINK_TYPES[type as DrinkType].units * quantity * 10) / 10,
+    })
+    .where(eq(drinks.id, drinkId));
+  revalidatePath("/", "layout");
+  return { ok: "Saved" };
+}
+
+// ─── Seshes ──────────────────────────────────────────────────────────────────
+
+/** Starts a sesh, ending the live one first ("next sesh"). Any member can. */
+export async function startSesh(groupId: string, _: FormState, form: FormData): Promise<FormState> {
+  const me = await requireUser();
+  await requireGroup(groupId, me.id);
+  const parsed = v.seshName.safeParse(form.get("name"));
+  if (!parsed.success) return { error: v.firstError(parsed.error) };
+
+  let seshId: string;
+  try {
+    seshId = await db.transaction(async (tx) => {
+      await tx
+        .update(seshes)
+        .set({ endedAt: new Date() })
+        .where(and(eq(seshes.groupId, groupId), isNull(seshes.endedAt)));
+      const [s] = await tx
+        .insert(seshes)
+        .values({ groupId, name: parsed.data, createdBy: me.id })
+        .returning({ id: seshes.id });
+      return s.id;
+    });
+  } catch (e) {
+    // Someone else started one at the same moment
+    if (isUniqueViolation(e)) return { error: "A sesh was just started, refresh" };
+    throw e;
+  }
+
+  revalidatePath(`/g/${groupId}`, "layout");
+  redirect(`/g/${groupId}/s/${seshId}`);
+}
+
+export async function endSesh(groupId: string, seshId: string) {
+  const me = await requireUser();
+  await requireGroup(groupId, me.id);
+  await db
+    .update(seshes)
+    .set({ endedAt: new Date() })
+    .where(and(eq(seshes.id, seshId), eq(seshes.groupId, groupId), isNull(seshes.endedAt)));
+  revalidatePath(`/g/${groupId}`, "layout");
+}
+
+export async function renameSesh(groupId: string, seshId: string, _: FormState, form: FormData): Promise<FormState> {
+  await requireOwner(groupId);
+  const parsed = v.seshName.safeParse(form.get("name"));
+  if (!parsed.success) return { error: v.firstError(parsed.error) };
+  await db
+    .update(seshes)
+    .set({ name: parsed.data })
+    .where(and(eq(seshes.id, seshId), eq(seshes.groupId, groupId)));
+  revalidatePath(`/g/${groupId}`, "layout");
+  return { ok: "Renamed" };
+}
+
+/** Deletes the sesh only; its drinks stay on everyone's record, just unassigned. */
+export async function deleteSesh(groupId: string, seshId: string) {
+  await requireOwner(groupId);
+  await db.delete(seshes).where(and(eq(seshes.id, seshId), eq(seshes.groupId, groupId)));
+  revalidatePath(`/g/${groupId}`, "layout");
+  redirect(`/g/${groupId}`);
+}
+
+/**
+ * Owner tool: put drinks into a sesh (moving them out of any other sesh in
+ * this group), or pass `seshId: null` to take them out of seshes entirely.
+ */
+export async function assignDrinks(groupId: string, seshId: string | null, drinkIds: string[]) {
+  await requireOwner(groupId);
+  const ids = drinkIds.filter((id) => /^[0-9a-f-]{36}$/i.test(id)).slice(0, 200);
+  if (ids.length === 0) return;
+  if (seshId) await requireSesh(groupId, seshId);
+
+  // Only drinks by current members of this group
+  const memberIds = db.select({ id: groupMembers.userId }).from(groupMembers).where(eq(groupMembers.groupId, groupId));
+  const valid = await db
+    .select({ id: drinks.id })
+    .from(drinks)
+    .where(and(inArray(drinks.id, ids), inArray(drinks.userId, memberIds)));
+  const validIds = valid.map((d) => d.id);
+  if (validIds.length === 0) return;
+
+  await db.transaction(async (tx) => {
+    await tx.delete(seshDrinks).where(and(eq(seshDrinks.groupId, groupId), inArray(seshDrinks.drinkId, validIds)));
+    if (seshId) {
+      await tx.insert(seshDrinks).values(validIds.map((drinkId) => ({ seshId, drinkId, groupId })));
+    }
+  });
+  revalidatePath(`/g/${groupId}`, "layout");
 }
 
 // ─── Chat ────────────────────────────────────────────────────────────────────

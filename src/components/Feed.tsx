@@ -3,10 +3,26 @@ import { drinkInfo, formatUnits } from "@/lib/drinks";
 import type { FeedItem } from "@/lib/queries";
 import { timeAgo } from "@/lib/time";
 import { Avatar } from "./Avatar";
-import { DeleteDrinkButton } from "./DeleteDrinkButton";
+import { DrinkMenu, type SeshOption } from "./DrinkMenu";
 
-export function Feed({ items, meId }: { items: FeedItem[]; meId: string }) {
-  if (items.length === 0) return <p className="px-4 py-6 text-center text-sm text-dim">No drinks logged yet. Be the first.</p>;
+export function Feed({
+  items,
+  meId,
+  groupId,
+  isOwner = false,
+  seshes = [],
+  showSesh = true,
+  empty = "No drinks logged yet. Be the first.",
+}: {
+  items: FeedItem[];
+  meId: string;
+  groupId: string;
+  isOwner?: boolean;
+  seshes?: SeshOption[];
+  showSesh?: boolean;
+  empty?: string;
+}) {
+  if (items.length === 0) return <p className="px-4 py-6 text-center text-sm text-dim">{empty}</p>;
 
   return (
     <ul className="divide-y divide-line">
@@ -25,13 +41,27 @@ export function Feed({ items, meId }: { items: FeedItem[]; meId: string }) {
                 <span className="text-muted">had</span> {d.quantity > 1 ? `${d.quantity}× ` : "a "}
                 {info.label.toLowerCase()} {info.emoji}
               </p>
-              {d.note && <p className="truncate text-xs text-muted">“{d.note}”</p>}
+              {(d.note || (showSesh && d.seshId)) && (
+                <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted">
+                  {showSesh && d.seshId && (
+                    <Link
+                      href={`/g/${groupId}/s/${d.seshId}`}
+                      className="shrink-0 rounded-full bg-foam/10 px-1.5 py-px font-medium text-foam hover:bg-foam/20"
+                    >
+                      {d.seshName}
+                    </Link>
+                  )}
+                  {d.note && <span className="truncate">“{d.note}”</span>}
+                </p>
+              )}
             </div>
             <span className="shrink-0 text-right text-xs text-dim">
               {timeAgo(d.drunkAt)}
               <span className="block">{formatUnits(d.units)}u</span>
             </span>
-            {d.userId === meId && <DeleteDrinkButton id={d.id} />}
+            {(d.userId === meId || isOwner) && (
+              <DrinkMenu drink={d} groupId={groupId} isOwner={isOwner} seshes={seshes} currentSeshId={d.seshId} />
+            )}
           </li>
         );
       })}

@@ -68,3 +68,29 @@ export const messageBody = z
   .trim()
   .min(1, "Say something")
   .max(500, "Max 500 characters");
+
+export const seshName = z.string().trim().min(1, "Name the sesh").max(40, "Max 40 characters");
+
+export const editDrink = z.object({
+  type: z.enum(DRINK_TYPE_KEYS as [string, ...string[]]),
+  quantity: z.coerce.number().int().min(1).max(20),
+  note: z
+    .string()
+    .trim()
+    .max(140)
+    .optional()
+    .transform((v) => v || null),
+  // Admins fixing history can pick any past time, unlike the 7-day limit on logging
+  drunkAt: z.string().transform((v, ctx) => {
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) {
+      ctx.addIssue({ code: "custom", message: "Invalid time" });
+      return z.NEVER;
+    }
+    if (d.getTime() > Date.now() + 5 * 60_000) {
+      ctx.addIssue({ code: "custom", message: "Can't be in the future" });
+      return z.NEVER;
+    }
+    return d;
+  }),
+});

@@ -8,8 +8,9 @@ import { PeriodTabs } from "@/components/PeriodTabs";
 import { RememberGroup } from "@/components/RememberGroup";
 import { requireUser } from "@/lib/auth";
 import { PERIODS, parsePeriod } from "@/lib/drinks";
-import { timeAgo } from "@/lib/time";
-import { getGroupFeed, getLatestMessage, getLeaderboard, getMyTonight, requireGroup } from "@/lib/queries";
+import { formatInTz, timeAgo } from "@/lib/time";
+import { getGroupFeed, getLatestMessage, getLeaderboard, getMyTonight, getSeshes, requireGroup } from "@/lib/queries";
+import { StartSeshForm } from "@/components/SeshForms";
 
 export async function generateMetadata({ params }: PageProps<"/g/[groupId]">) {
   const { groupId } = await params;
@@ -22,14 +23,19 @@ export default async function GroupPage({ params, searchParams }: PageProps<"/g/
   const { groupId } = await params;
   const period = parsePeriod((await searchParams).period);
   const me = await requireUser(`/g/${groupId}`);
-  const { group } = await requireGroup(groupId, me.id);
+  const { group, role } = await requireGroup(groupId, me.id);
+  const isOwner = role === "owner";
 
-  const [board, feed, tonight, lastMessage] = await Promise.all([
+  const [board, feed, tonight, lastMessage, seshes] = await Promise.all([
     getLeaderboard(group.id, group.timezone, period),
     getGroupFeed(group.id),
     getMyTonight(me.id, group.timezone),
     getLatestMessage(group.id),
+    getSeshes(group.id, 20),
   ]);
+  const liveSesh = seshes.find((x) => x.endedAt === null);
+  const pastSeshes = seshes.filter((x) => x.endedAt !== null);
+  const seshOptions = seshes.map((x) => ({ id: x.id, name: x.name }));
 
   return (
     <div className="space-y-5">
@@ -67,6 +73,33 @@ export default async function GroupPage({ params, searchParams }: PageProps<"/g/
         <span className="text-dim">→</span>
       </Link>
 
+      {liveSesh ? (
+        <Link
+          href={`/g/${group.id}/s/${liveSesh.id}`}
+          className="card flex items-center gap-3 border-danger/40 px-4 py-3 transition hover:bg-card-hi"
+        >
+          <span className="relative flex size-3 shrink-0">
+            <span className="absolute inline-flex size-full animate-ping rounded-full bg-danger opacity-60" />
+            <span className="relative inline-flex size-3 rounded-full bg-danger" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-xs font-semibold uppercase tracking-wide text-danger">Live sesh</span>
+            <span className="block truncate font-display text-lg font-semibold">{liveSesh.name}</span>
+          </span>
+          <span className="shrink-0 text-right text-sm text-muted">
+            <span className="block font-semibold text-ink">{liveSesh.drinks} drinks</span>
+            {liveSesh.people} {liveSesh.people === 1 ? "person" : "people"}
+          </span>
+          <span className="text-dim">→</span>
+        </Link>
+      ) : (
+        <section className="card space-y-2 p-4">
+          <h2 className="font-display text-lg font-semibold">Going out?</h2>
+          <p className="text-sm text-muted">Start a sesh and everyone’s drinks count towards it until it ends.</p>
+          <StartSeshForm groupId={group.id} live={false} />
+        </section>
+      )}
+
       <LogDrink tonight={tonight} />
 
       <section className="card overflow-hidden">
@@ -83,8 +116,32 @@ export default async function GroupPage({ params, searchParams }: PageProps<"/g/
 
       <section className="card overflow-hidden">
         <h2 className="border-b border-line px-4 py-3 font-display text-lg font-semibold">Latest</h2>
-        <Feed items={feed} meId={me.id} />
+        <Feed items={feed} meId={me.id} groupId={group.id} isOwner={isOwner} seshes={seshOptions} />
       </section>
+
+      {pastSeshes.length > 0 && (
+        <section className="card overflow-hidden">
+          <h2 className="border-b border-line px-4 py-3 font-display text-lg font-semibold">Past seshes</h2>
+          <ul className="divide-y divide-line">
+            {pastSeshes.map((x) => (
+              <li key={x.id}>
+                <Link href={`/g/${group.id}/s/${x.id}`} className="flex items-center gap-3 px-4 py-3 transition hover:bg-card-hi">
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-semibold">{x.name}</span>
+                    <span className="block text-xs text-dim">
+                      {formatInTz(x.startedAt, group.timezone, { weekday: "short", day: "numeric", month: "short" })}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-sm text-muted">
+                    {x.drinks} drinks · {x.people} {x.people === 1 ? "person" : "people"}
+                  </span>
+                  <span className="text-dim">→</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

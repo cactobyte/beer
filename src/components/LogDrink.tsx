@@ -6,7 +6,7 @@ import { DRINK_TYPES, DRINK_TYPE_KEYS, formatUnits } from "@/lib/drinks";
 
 const TOAST_MS = 6000;
 
-export function LogDrink({ tonight }: { tonight: number }) {
+export function LogDrink({ tonight, countLabel = "You tonight" }: { tonight: number; countLabel?: string }) {
   const [qty, setQty] = useState(1);
   const [showMore, setShowMore] = useState(false);
   const [note, setNote] = useState("");
@@ -41,7 +41,7 @@ export function LogDrink({ tonight }: { tonight: number }) {
       <div className="mb-3 flex items-baseline justify-between">
         <h2 className="font-display text-xl font-semibold">Log a drink</h2>
         <p className="text-sm text-muted">
-          You tonight: <span className="font-semibold text-foam">{tonight}</span>
+          {countLabel}: <span className="font-semibold text-foam">{tonight}</span>
         </p>
       </div>
 
