@@ -64,7 +64,7 @@ export default async function GroupSettingsPage({ params }: PageProps<"/g/[group
           {members.map((m) => (
             <li key={m.userId} className="flex items-center gap-3 px-5 py-3">
               <Avatar emoji={m.emoji} size="sm" />
-              <Link href={`/u/${m.username}`} className="min-w-0 flex-1 truncate hover:underline">
+              <Link href={`/u/${m.username}`} prefetch={false} className="min-w-0 flex-1 truncate hover:underline">
                 <span className="font-medium">{m.displayName}</span>{" "}
                 <span className="text-sm text-dim">@{m.username}</span>
               </Link>

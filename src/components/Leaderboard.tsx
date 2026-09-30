@@ -23,7 +23,7 @@ export function Leaderboard({ rows, meId }: { rows: LeaderboardRow[]; meId: stri
             <span className="w-7 text-center font-display text-lg font-semibold text-muted tabular-nums">
               {podium ? MEDALS[rank - 1] : rank}
             </span>
-            <Link href={`/u/${r.username}`} className="flex min-w-0 flex-1 items-center gap-3">
+            <Link href={`/u/${r.username}`} prefetch={false} className="flex min-w-0 flex-1 items-center gap-3">
               <span className={podium ? `rounded-full ring-2 ${RING[rank - 1]}` : ""}>
                 <Avatar emoji={r.emoji} />
               </span>

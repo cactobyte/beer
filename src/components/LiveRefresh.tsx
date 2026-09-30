@@ -1,47 +1,20 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef } from "react";
+import { useCallback, useRef } from "react";
+import { useGroupVersion } from "@/lib/useGroupVersion";
 
-const POLL_MS = 3000;
-
-/**
- * Keeps a group page live: polls the group's change counter while the tab is
- * visible and re-renders the page's server data as soon as it moves.
- */
+/** Re-renders the page's server data the moment anything in the group changes. */
 export function LiveRefresh({ groupId }: { groupId: string }) {
   const router = useRouter();
-  const last = useRef<number | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    let stopped = false;
-    let inFlight = false;
+  // Coalesce bursts (e.g. someone logging 3 shots in a row) into one refresh
+  const refresh = useCallback(() => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => router.refresh(), 100);
+  }, [router]);
 
-    async function check() {
-      if (stopped || inFlight || document.visibilityState !== "visible") return;
-      inFlight = true;
-      try {
-        const res = await fetch(`/api/groups/${groupId}/version`, { cache: "no-store" });
-        if (!res.ok) return;
-        const { version } = (await res.json()) as { version: number };
-        if (last.current !== null && version !== last.current) router.refresh();
-        last.current = version;
-      } catch {
-        // offline for a moment; next tick retries
-      } finally {
-        inFlight = false;
-      }
-    }
-
-    check();
-    const id = setInterval(check, POLL_MS);
-    document.addEventListener("visibilitychange", check);
-    return () => {
-      stopped = true;
-      clearInterval(id);
-      document.removeEventListener("visibilitychange", check);
-    };
-  }, [groupId, router]);
-
+  useGroupVersion(groupId, refresh);
   return null;
 }

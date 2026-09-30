@@ -4,9 +4,10 @@ import Link from "next/link";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useTransition } from "react";
 import { deleteMessage, sendMessage, type SendResult } from "@/app/actions";
 import type { ChatMessage } from "@/lib/queries";
+import { useGroupVersion } from "@/lib/useGroupVersion";
 import { Avatar } from "./Avatar";
 
-const POLL_MS = 3000;
+const POLL_MS = 15_000;
 const PAGE_SIZE = 50;
 // Consecutive messages from one person within this window are grouped under one name
 const GROUP_MS = 5 * 60_000;
@@ -82,6 +83,8 @@ export function Chat({ groupId, meId, initial }: { groupId: string; meId: string
     }
   }, [groupId]);
 
+  // Pushed the instant anything changes; the slow interval is only a safety net
+  useGroupVersion(groupId, poll);
   useEffect(() => {
     const id = setInterval(poll, POLL_MS);
     document.addEventListener("visibilitychange", poll);
@@ -195,7 +198,7 @@ export function Chat({ groupId, meId, initial }: { groupId: string; meId: string
               <div className={`group flex items-end gap-2 ${mine ? "flex-row-reverse" : ""} ${startsRun ? "mt-2" : ""}`}>
                 {!mine &&
                   (startsRun ? (
-                    <Link href={`/u/${m.username}`} className="self-start">
+                    <Link href={`/u/${m.username}`} prefetch={false} className="self-start">
                       <Avatar emoji={m.emoji} size="sm" />
                     </Link>
                   ) : (

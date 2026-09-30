@@ -5,12 +5,20 @@ import { assignDrinks, deleteDrink, editDrink } from "@/app/actions";
 import { DRINK_TYPES, DRINK_TYPE_KEYS } from "@/lib/drinks";
 import type { FormState } from "@/lib/validation";
 import { FormMessage } from "./FormMessage";
+import { useHideRow } from "./HideableRows";
 import { SubmitButton } from "./SubmitButton";
 
 export type SeshOption = { id: string; name: string };
 
 type Props = {
-  drink: { id: string; type: string; quantity: number; note: string | null; drunkAt: Date | string; displayName: string };
+  drink: {
+    id: string;
+    type: string;
+    quantity: number;
+    note: string | null;
+    drunkAt: Date | string;
+    displayName: string;
+  };
   /** Group context; needed for owner powers and sesh moves */
   groupId?: string;
   /** Owner of the group: can move drinks between seshes */
@@ -27,6 +35,7 @@ function toLocalInput(d: Date) {
 
 export function DrinkMenu({ drink, groupId, isOwner, seshes = [], currentSeshId }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const rows = useHideRow();
   const [when, setWhen] = useState("");
   const [pending, start] = useTransition();
   const [state, action] = useActionState(async (prev: FormState, form: FormData) => {
@@ -62,7 +71,12 @@ export function DrinkMenu({ drink, groupId, isOwner, seshes = [], currentSeshId 
         <form action={action} className="space-y-3 p-5">
           <div className="flex items-center justify-between">
             <h2 className="font-display text-lg font-semibold">Edit {drink.displayName}’s drink</h2>
-            <button type="button" onClick={() => dialog.current?.close()} className="text-muted hover:text-ink" aria-label="Close">
+            <button
+              type="button"
+              onClick={() => dialog.current?.close()}
+              className="text-muted hover:text-ink"
+              aria-label="Close"
+            >
               ✕
             </button>
           </div>
@@ -134,9 +148,15 @@ export function DrinkMenu({ drink, groupId, isOwner, seshes = [], currentSeshId 
             className="btn btn-danger w-full"
             onClick={() => {
               if (!confirm("Delete this drink? It disappears from every leaderboard.")) return;
+              // Gone immediately; comes back only if the server refuses
+              dialog.current?.close();
+              rows?.hide(drink.id);
               start(async () => {
-                await deleteDrink(drink.id, groupId);
-                dialog.current?.close();
+                try {
+                  await deleteDrink(drink.id, groupId);
+                } catch {
+                  rows?.show(drink.id);
+                }
               });
             }}
           >

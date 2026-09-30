@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Avatar } from "@/components/Avatar";
 import { DrinkMenu } from "@/components/DrinkMenu";
+import { HideableRow, HideableRows } from "@/components/HideableRows";
 import { requireUser } from "@/lib/auth";
 import { drinkInfo, formatUnits } from "@/lib/drinks";
 import { getUserByUsername, getUserHistory, getUserStats, sharesGroup } from "@/lib/queries";
@@ -30,8 +31,7 @@ export default async function ProfilePage({ params }: PageProps<"/u/[username]">
         <div className="min-w-0 flex-1">
           <h1 className="truncate font-display text-3xl font-extrabold tracking-tight">{user.displayName}</h1>
           <p className="text-sm text-muted">
-            @{user.username} · joined{" "}
-            {user.createdAt.toLocaleDateString("en-GB", { month: "short", year: "numeric" })}
+            @{user.username} · joined {user.createdAt.toLocaleDateString("en-GB", { month: "short", year: "numeric" })}
           </p>
         </div>
         {isMe && (
@@ -50,7 +50,11 @@ export default async function ProfilePage({ params }: PageProps<"/u/[username]">
           value={stats.bestNight?.drinks ?? "–"}
           sub={
             stats.bestNight
-              ? new Date(stats.bestNight.night).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit" })
+              ? new Date(stats.bestNight.night).toLocaleDateString("en-GB", {
+                  day: "numeric",
+                  month: "short",
+                  year: "2-digit",
+                })
               : undefined
           }
         />
@@ -66,7 +70,10 @@ export default async function ProfilePage({ params }: PageProps<"/u/[username]">
                 <span className="w-6 text-center text-lg">{info.emoji}</span>
                 <span className="w-28 shrink-0 truncate">{info.label}</span>
                 <span className="h-2.5 flex-1 overflow-hidden rounded-full bg-bg">
-                  <span className="block h-full rounded-full bg-foam" style={{ width: `${(t.drinks / maxType) * 100}%` }} />
+                  <span
+                    className="block h-full rounded-full bg-foam"
+                    style={{ width: `${(t.drinks / maxType) * 100}%` }}
+                  />
                 </span>
                 <span className="w-8 text-right font-semibold tabular-nums">{t.drinks}</span>
               </div>
@@ -80,25 +87,27 @@ export default async function ProfilePage({ params }: PageProps<"/u/[username]">
         {history.length === 0 ? (
           <p className="px-5 py-6 text-center text-sm text-dim">Clean record. For now.</p>
         ) : (
-          <ul className="divide-y divide-line">
-            {history.map((d) => {
-              const info = drinkInfo(d.type);
-              return (
-                <li key={d.id} className="flex items-center gap-3 px-5 py-2.5 text-sm">
-                  <span className="text-xl">{info.emoji}</span>
-                  <div className="min-w-0 flex-1">
-                    <p>
-                      {d.quantity > 1 ? `${d.quantity}× ` : ""}
-                      {info.label} <span className="text-dim">· {formatUnits(d.units)}u</span>
-                    </p>
-                    {d.note && <p className="truncate text-xs text-muted">“{d.note}”</p>}
-                  </div>
-                  <span className="shrink-0 text-xs text-dim">{timeAgo(d.drunkAt)}</span>
-                  {isMe && <DrinkMenu drink={{ ...d, displayName: user.displayName }} />}
-                </li>
-              );
-            })}
-          </ul>
+          <HideableRows>
+            <ul className="divide-y divide-line">
+              {history.map((d) => {
+                const info = drinkInfo(d.type);
+                return (
+                  <HideableRow key={d.id} id={d.id} className="flex items-center gap-3 px-5 py-2.5 text-sm">
+                    <span className="text-xl">{info.emoji}</span>
+                    <div className="min-w-0 flex-1">
+                      <p>
+                        {d.quantity > 1 ? `${d.quantity}× ` : ""}
+                        {info.label} <span className="text-dim">· {formatUnits(d.units)}u</span>
+                      </p>
+                      {d.note && <p className="truncate text-xs text-muted">“{d.note}”</p>}
+                    </div>
+                    <span className="shrink-0 text-xs text-dim">{timeAgo(d.drunkAt)}</span>
+                    {isMe && <DrinkMenu drink={{ ...d, displayName: user.displayName }} />}
+                  </HideableRow>
+                );
+              })}
+            </ul>
+          </HideableRows>
         )}
       </section>
     </div>

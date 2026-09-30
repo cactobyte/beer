@@ -125,7 +125,7 @@ export default async function GroupPage({ params, searchParams }: PageProps<"/g/
           <ul className="divide-y divide-line">
             {pastSeshes.map((x) => (
               <li key={x.id}>
-                <Link href={`/g/${group.id}/s/${x.id}`} className="flex items-center gap-3 px-4 py-3 transition hover:bg-card-hi">
+                <Link href={`/g/${group.id}/s/${x.id}`} prefetch={false} className="flex items-center gap-3 px-4 py-3 transition hover:bg-card-hi">
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-semibold">{x.name}</span>
                     <span className="block text-xs text-dim">
