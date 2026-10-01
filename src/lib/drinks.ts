@@ -9,9 +9,9 @@ export const DRINK_TYPES = {
   wine: { label: "Wine", emoji: "🍷", units: 2.1 },
   fizz: { label: "Prosecco", emoji: "🥂", units: 1.5 },
   shot: { label: "Shot", emoji: "🥃", units: 1.0 },
-  mixer: { label: "Mixer", emoji: "🧊", units: 1.0 },
-  // Single 25ml vodka
-  vodka_redbull: { label: "Vodka RB", emoji: "⚡", units: 1.0 },
+  // Spirit and mixer: 25ml single / 50ml double at 40%
+  mixer: { label: "Single mixer", emoji: "🧊", units: 1.0 },
+  double_mixer: { label: "Double mixer", emoji: "🍹", units: 2.0 },
   cocktail: { label: "Cocktail", emoji: "🍸", units: 2.0 },
   seltzer: { label: "Seltzer", emoji: "🫧", units: 1.3 },
   soju: { label: "Soju", emoji: "🍶", units: 1.0 },
@@ -29,7 +29,6 @@ export function drinkInfo(type: string) {
 // How a single one reads in a sentence ("Dave had …"), where "a" + lowercase label doesn't work
 const PHRASES: Partial<Record<DrinkType, string>> = {
   asahi: "an Asahi",
-  vodka_redbull: "a vodka Red Bull",
   other: "something else",
 };
 

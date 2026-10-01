@@ -127,10 +127,10 @@ export function LogDrink({ tonight, countLabel = "You tonight" }: { tonight: num
               type="button"
               value={key}
               onClick={() => log(key)}
-              className="flex flex-col items-center gap-0.5 rounded-xl border border-line bg-bg px-1 py-2.5 transition hover:border-foam/60 hover:bg-card-hi active:animate-pop"
+              className="flex flex-col items-center justify-center gap-0.5 rounded-xl border border-line bg-bg px-1 py-2.5 transition hover:border-foam/60 hover:bg-card-hi active:animate-pop"
             >
               <span className="text-2xl leading-none sm:text-3xl">{d.emoji}</span>
-              <span className="mt-1 w-full truncate text-center text-xs font-medium sm:text-sm">{d.label}</span>
+              <span className="mt-1 w-full text-center text-xs leading-tight font-medium text-balance sm:text-sm">{d.label}</span>
               <span className="text-[11px] text-dim">{formatUnits(d.units * qty)}u</span>
             </button>
           );
