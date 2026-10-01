@@ -249,6 +249,27 @@ export async function removeMember(groupId: string, userId: string) {
   revalidatePath(`/g/${groupId}`, "layout");
 }
 
+/** Owner gives a member a name that's shown everywhere inside this group. Blank clears it. */
+export async function setNickname(groupId: string, userId: string, _: FormState, form: FormData): Promise<FormState> {
+  await requireOwner(groupId);
+  const raw = String(form.get("nickname") ?? "").trim();
+  let nickname: string | null = null;
+  if (raw) {
+    const parsed = v.displayName.safeParse(raw);
+    if (!parsed.success) return { error: v.firstError(parsed.error) };
+    nickname = parsed.data;
+  }
+  const updated = await db
+    .update(groupMembers)
+    .set({ nickname })
+    .where(and(eq(groupMembers.groupId, groupId), eq(groupMembers.userId, userId)))
+    .returning({ userId: groupMembers.userId });
+  if (updated.length === 0) return { error: "They're not in this group" };
+  await touchGroup(groupId);
+  revalidatePath(`/g/${groupId}`, "layout");
+  return { ok: nickname ? "Renamed" : "Nickname cleared" };
+}
+
 // ─── Drinks ──────────────────────────────────────────────────────────────────
 
 export type LogResult = { error?: string; loggedId?: string; label?: string; at?: number } | undefined;

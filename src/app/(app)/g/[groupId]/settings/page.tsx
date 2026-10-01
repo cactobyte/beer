@@ -7,6 +7,7 @@ import { LiveRefresh } from "@/components/LiveRefresh";
 import { requireUser } from "@/lib/auth";
 import { getGroupMembers, requireGroup } from "@/lib/queries";
 import { GroupSettingsForm } from "./form";
+import { NicknameEditor } from "./nickname";
 
 export const metadata = { title: "Group settings" };
 
@@ -62,24 +63,27 @@ export default async function GroupSettingsPage({ params }: PageProps<"/g/[group
         <h2 className="border-b border-line px-5 py-3 font-display text-lg font-semibold">Members ({members.length})</h2>
         <ul className="divide-y divide-line">
           {members.map((m) => (
-            <li key={m.userId} className="flex items-center gap-3 px-5 py-3">
+            <li key={m.userId} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-5 py-3">
               <Avatar emoji={m.emoji} size="sm" />
               <Link href={`/u/${m.username}`} prefetch={false} className="min-w-0 flex-1 truncate hover:underline">
                 <span className="font-medium">{m.displayName}</span>{" "}
-                <span className="text-sm text-dim">@{m.username}</span>
+                <span className="text-sm text-dim">
+                  @{m.username}
+                  {m.nickname && ` · ${m.realName}`}
+                </span>
               </Link>
-              {m.role === "owner" ? (
-                <span className="text-xs text-foam">owner</span>
-              ) : (
-                isOwner && (
-                  <ConfirmButton
-                    action={removeMember.bind(null, group.id, m.userId)}
-                    confirm={`Remove ${m.displayName} from the group?`}
-                    className="text-xs text-dim hover:text-danger"
-                  >
-                    Remove
-                  </ConfirmButton>
-                )
+              {m.role === "owner" && <span className="text-xs text-foam">owner</span>}
+              {isOwner && (
+                <NicknameEditor groupId={group.id} userId={m.userId} nickname={m.nickname} realName={m.realName} />
+              )}
+              {isOwner && m.role !== "owner" && (
+                <ConfirmButton
+                  action={removeMember.bind(null, group.id, m.userId)}
+                  confirm={`Remove ${m.displayName} from the group?`}
+                  className="text-xs text-dim hover:text-danger"
+                >
+                  Remove
+                </ConfirmButton>
               )}
             </li>
           ))}

@@ -68,6 +68,8 @@ export const groupMembers = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     role: text("role", { enum: ["owner", "member"] }).notNull().default("member"),
+    // Set by the group owner; shown instead of the display name inside this group
+    nickname: text("nickname"),
     joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

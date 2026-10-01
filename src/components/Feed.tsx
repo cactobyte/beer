@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { drinkInfo, formatUnits } from "@/lib/drinks";
+import { drinkInfo, drinkPhrase, formatUnits } from "@/lib/drinks";
 import type { FeedItem } from "@/lib/queries";
 import { timeAgo } from "@/lib/time";
 import { Avatar } from "./Avatar";
@@ -40,8 +40,7 @@ export function Feed({
                   <Link href={`/u/${d.username}`} prefetch={false} className="font-semibold hover:underline">
                     {d.displayName}
                   </Link>{" "}
-                  <span className="text-muted">had</span> {d.quantity > 1 ? `${d.quantity}× ` : "a "}
-                  {info.label.toLowerCase()} {info.emoji}
+                  <span className="text-muted">had</span> {drinkPhrase(d.type, d.quantity)} {info.emoji}
                 </p>
                 {(d.note || (showSesh && d.seshId)) && (
                   <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted">

@@ -7,6 +7,12 @@ import type { Period } from "./drinks";
 const { users, groups, groupMembers, drinks } = schema;
 
 /**
+ * A person's name as shown inside a group: the owner-set nickname if there is
+ * one, else their own display name. Needs group_members joined for that group.
+ */
+const shownName = sql<string>`coalesce(${groupMembers.nickname}, ${users.displayName})`;
+
+/**
  * Start of a leaderboard period in the group's timezone. Days roll over at
  * 6am rather than midnight so a night out counts as one "tonight".
  */
@@ -51,7 +57,7 @@ export async function getLeaderboard(groupId: string, tz: string, period: Period
     .select({
       userId: users.id,
       username: users.username,
-      displayName: users.displayName,
+      displayName: shownName,
       emoji: users.emoji,
       drinks: sql<number>`coalesce(sum(${drinks.quantity}), 0)::int`,
       units: sql<number>`coalesce(sum(${drinks.units}), 0)::float`,
@@ -61,11 +67,11 @@ export async function getLeaderboard(groupId: string, tz: string, period: Period
     .innerJoin(users, eq(users.id, groupMembers.userId))
     .leftJoin(drinks, and(eq(drinks.userId, users.id), inPeriod))
     .where(eq(groupMembers.groupId, groupId))
-    .groupBy(users.id)
+    .groupBy(users.id, groupMembers.nickname)
     .orderBy(
       desc(sql`coalesce(sum(${drinks.quantity}), 0)`),
       desc(sql`coalesce(sum(${drinks.units}), 0)`),
-      users.displayName,
+      shownName,
     );
 }
 
@@ -73,11 +79,6 @@ export type LeaderboardRow = Awaited<ReturnType<typeof getLeaderboard>>[number];
 
 /** Latest drinks logged by anyone in the group. */
 export async function getGroupFeed(groupId: string, limit = 25) {
-  const memberIds = db
-    .select({ id: groupMembers.userId })
-    .from(groupMembers)
-    .where(eq(groupMembers.groupId, groupId));
-
   return db
     .select({
       id: drinks.id,
@@ -88,19 +89,20 @@ export async function getGroupFeed(groupId: string, limit = 25) {
       drunkAt: drinks.drunkAt,
       userId: users.id,
       username: users.username,
-      displayName: users.displayName,
+      displayName: shownName,
       emoji: users.emoji,
       seshId: schema.seshDrinks.seshId,
       seshName: schema.seshes.name,
     })
     .from(drinks)
     .innerJoin(users, eq(users.id, drinks.userId))
+    // Current members only
+    .innerJoin(groupMembers, and(eq(groupMembers.groupId, groupId), eq(groupMembers.userId, drinks.userId)))
     .leftJoin(
       schema.seshDrinks,
       and(eq(schema.seshDrinks.drinkId, drinks.id), eq(schema.seshDrinks.groupId, groupId)),
     )
     .leftJoin(schema.seshes, eq(schema.seshes.id, schema.seshDrinks.seshId))
-    .where(inArray(drinks.userId, memberIds))
     .orderBy(desc(drinks.drunkAt))
     .limit(limit);
 }
@@ -112,7 +114,9 @@ export async function getGroupMembers(groupId: string) {
     .select({
       userId: users.id,
       username: users.username,
-      displayName: users.displayName,
+      displayName: shownName,
+      realName: users.displayName,
+      nickname: groupMembers.nickname,
       emoji: users.emoji,
       role: groupMembers.role,
       joinedAt: groupMembers.joinedAt,
@@ -222,7 +226,7 @@ const messageColumns = {
   createdAt: schema.messages.createdAt,
   userId: users.id,
   username: users.username,
-  displayName: users.displayName,
+  displayName: shownName,
   emoji: users.emoji,
 };
 
@@ -256,6 +260,7 @@ export async function getMessages(groupId: string, opts: { after?: Date; before?
     .select(messageColumns)
     .from(messages)
     .innerJoin(users, eq(users.id, messages.userId))
+    .leftJoin(groupMembers, and(eq(groupMembers.groupId, messages.groupId), eq(groupMembers.userId, messages.userId)))
     .where(and(...conds))
     // Polling wants the oldest new messages first; history wants the newest page
     .orderBy(opts.after ? asc(messages.createdAt) : desc(messages.createdAt))
@@ -275,6 +280,10 @@ export async function getMessageById(id: string) {
     .select(messageColumns)
     .from(schema.messages)
     .innerJoin(users, eq(users.id, schema.messages.userId))
+    .leftJoin(
+      groupMembers,
+      and(eq(groupMembers.groupId, schema.messages.groupId), eq(groupMembers.userId, schema.messages.userId)),
+    )
     .where(eq(schema.messages.id, id))
     .limit(1);
   return row ? toChatMessage(row) : null;
@@ -333,7 +342,7 @@ export async function getSeshLeaderboard(seshId: string) {
     .select({
       userId: users.id,
       username: users.username,
-      displayName: users.displayName,
+      displayName: shownName,
       emoji: users.emoji,
       drinks: sql<number>`sum(${drinks.quantity})::int`,
       units: sql<number>`sum(${drinks.units})::float`,
@@ -342,9 +351,10 @@ export async function getSeshLeaderboard(seshId: string) {
     .from(seshDrinks)
     .innerJoin(drinks, eq(drinks.id, seshDrinks.drinkId))
     .innerJoin(users, eq(users.id, drinks.userId))
+    .leftJoin(groupMembers, and(eq(groupMembers.groupId, seshDrinks.groupId), eq(groupMembers.userId, users.id)))
     .where(eq(seshDrinks.seshId, seshId))
-    .groupBy(users.id)
-    .orderBy(desc(sql`sum(${drinks.quantity})`), desc(sql`sum(${drinks.units})`), users.displayName);
+    .groupBy(users.id, groupMembers.nickname)
+    .orderBy(desc(sql`sum(${drinks.quantity})`), desc(sql`sum(${drinks.units})`), shownName);
 }
 
 const drinkRowColumns = {
@@ -356,7 +366,7 @@ const drinkRowColumns = {
   drunkAt: drinks.drunkAt,
   userId: users.id,
   username: users.username,
-  displayName: users.displayName,
+  displayName: shownName,
   emoji: users.emoji,
 };
 
@@ -366,21 +376,21 @@ export async function getSeshDrinks(seshId: string) {
     .from(seshDrinks)
     .innerJoin(drinks, eq(drinks.id, seshDrinks.drinkId))
     .innerJoin(users, eq(users.id, drinks.userId))
+    .leftJoin(groupMembers, and(eq(groupMembers.groupId, seshDrinks.groupId), eq(groupMembers.userId, users.id)))
     .where(eq(seshDrinks.seshId, seshId))
     .orderBy(desc(drinks.drunkAt));
 }
 
 /** Recent drinks by group members that aren't in any of this group's seshes yet. */
 export async function getUnassignedDrinks(groupId: string, days = 14) {
-  const memberIds = db.select({ id: groupMembers.userId }).from(groupMembers).where(eq(groupMembers.groupId, groupId));
   return db
     .select({ ...drinkRowColumns, seshId: sql<string | null>`null`, seshName: sql<string | null>`null` })
     .from(drinks)
     .innerJoin(users, eq(users.id, drinks.userId))
+    .innerJoin(groupMembers, and(eq(groupMembers.groupId, groupId), eq(groupMembers.userId, drinks.userId)))
     .leftJoin(seshDrinks, and(eq(seshDrinks.drinkId, drinks.id), eq(seshDrinks.groupId, groupId)))
     .where(
       and(
-        inArray(drinks.userId, memberIds),
         isNull(seshDrinks.drinkId),
         gte(drinks.drunkAt, sql`now() - make_interval(days => ${days})`),
       ),
