@@ -1,5 +1,6 @@
 import "server-only";
 import { and, asc, desc, eq, gte, inArray, isNull, lt, sql, type SQL } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { notFound } from "next/navigation";
 import { db, schema } from "@/db";
 import type { Period } from "./drinks";
@@ -11,6 +12,9 @@ const { users, groups, groupMembers, drinks } = schema;
  * one, else their own display name. Needs group_members joined for that group.
  */
 const shownName = sql<string>`coalesce(${groupMembers.nickname}, ${users.displayName})`;
+
+// Whoever logged a drink on someone else's behalf
+const logger = alias(users, "logger");
 
 /**
  * Start of a leaderboard period in the group's timezone. Days roll over at
@@ -86,6 +90,9 @@ export async function getGroupFeed(groupId: string, limit = 25) {
       quantity: drinks.quantity,
       units: drinks.units,
       note: drinks.note,
+      label: drinks.label,
+      drinkEmoji: drinks.emoji,
+      loggedByName: logger.displayName,
       drunkAt: drinks.drunkAt,
       userId: users.id,
       username: users.username,
@@ -103,6 +110,7 @@ export async function getGroupFeed(groupId: string, limit = 25) {
       and(eq(schema.seshDrinks.drinkId, drinks.id), eq(schema.seshDrinks.groupId, groupId)),
     )
     .leftJoin(schema.seshes, eq(schema.seshes.id, schema.seshDrinks.seshId))
+    .leftJoin(logger, eq(logger.id, drinks.loggedBy))
     .orderBy(desc(drinks.drunkAt))
     .limit(limit);
 }
@@ -168,6 +176,8 @@ export async function getUserStats(userId: string) {
   const byType = await db
     .select({
       type: drinks.type,
+      label: sql<string | null>`max(${drinks.label})`,
+      emoji: sql<string | null>`max(${drinks.emoji})`,
       drinks: sql<number>`sum(${drinks.quantity})::int`,
       units: sql<number>`sum(${drinks.units})::float`,
     })
@@ -363,6 +373,9 @@ const drinkRowColumns = {
   quantity: drinks.quantity,
   units: drinks.units,
   note: drinks.note,
+  label: drinks.label,
+  drinkEmoji: drinks.emoji,
+  loggedByName: logger.displayName,
   drunkAt: drinks.drunkAt,
   userId: users.id,
   username: users.username,
@@ -376,6 +389,7 @@ export async function getSeshDrinks(seshId: string) {
     .from(seshDrinks)
     .innerJoin(drinks, eq(drinks.id, seshDrinks.drinkId))
     .innerJoin(users, eq(users.id, drinks.userId))
+    .leftJoin(logger, eq(logger.id, drinks.loggedBy))
     .leftJoin(groupMembers, and(eq(groupMembers.groupId, seshDrinks.groupId), eq(groupMembers.userId, users.id)))
     .where(eq(seshDrinks.seshId, seshId))
     .orderBy(desc(drinks.drunkAt));
@@ -387,6 +401,7 @@ export async function getUnassignedDrinks(groupId: string, days = 14) {
     .select({ ...drinkRowColumns, seshId: sql<string | null>`null`, seshName: sql<string | null>`null` })
     .from(drinks)
     .innerJoin(users, eq(users.id, drinks.userId))
+    .leftJoin(logger, eq(logger.id, drinks.loggedBy))
     .innerJoin(groupMembers, and(eq(groupMembers.groupId, groupId), eq(groupMembers.userId, drinks.userId)))
     .leftJoin(seshDrinks, and(eq(seshDrinks.drinkId, drinks.id), eq(seshDrinks.groupId, groupId)))
     .where(

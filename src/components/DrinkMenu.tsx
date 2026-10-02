@@ -2,7 +2,7 @@
 
 import { useActionState, useRef, useState, useTransition } from "react";
 import { assignDrinks, deleteDrink, editDrink } from "@/app/actions";
-import { DRINK_TYPES, DRINK_TYPE_KEYS } from "@/lib/drinks";
+import { BUILTIN_OPTIONS, drinkDisplay, type DrinkOption } from "@/lib/drinks";
 import type { FormState } from "@/lib/validation";
 import { FormMessage } from "./FormMessage";
 import { useHideRow } from "./HideableRows";
@@ -14,6 +14,8 @@ type Props = {
   drink: {
     id: string;
     type: string;
+    label?: string | null;
+    drinkEmoji?: string | null;
     quantity: number;
     note: string | null;
     drunkAt: Date | string;
@@ -25,6 +27,8 @@ type Props = {
   isOwner?: boolean;
   seshes?: SeshOption[];
   currentSeshId?: string | null;
+  /** Drinks to choose from when changing type; defaults to the built-ins */
+  options?: DrinkOption[];
 };
 
 /** Value for <input type="datetime-local"> in the viewer's own timezone. */
@@ -33,7 +37,19 @@ function toLocalInput(d: Date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export function DrinkMenu({ drink, groupId, isOwner, seshes = [], currentSeshId }: Props) {
+export function DrinkMenu({ drink, groupId, isOwner, seshes = [], currentSeshId, options = BUILTIN_OPTIONS }: Props) {
+  // Keep the drink's own type selectable even if it's hidden or from another group
+  const choices = options.some((o) => o.key === drink.type)
+    ? options
+    : [
+        {
+          key: drink.type,
+          units: 0,
+          custom: true,
+          ...drinkDisplay({ type: drink.type, label: drink.label, emoji: drink.drinkEmoji }),
+        },
+        ...options,
+      ];
   const dialog = useRef<HTMLDialogElement>(null);
   const rows = useHideRow();
   const [when, setWhen] = useState("");
@@ -82,9 +98,9 @@ export function DrinkMenu({ drink, groupId, isOwner, seshes = [], currentSeshId 
           </div>
           <div className="grid grid-cols-[1fr_5rem] gap-2">
             <select name="type" defaultValue={drink.type} className="input" aria-label="Drink">
-              {DRINK_TYPE_KEYS.map((k) => (
-                <option key={k} value={k}>
-                  {DRINK_TYPES[k].emoji} {DRINK_TYPES[k].label}
+              {choices.map((o) => (
+                <option key={o.key} value={o.key}>
+                  {o.emoji} {o.label}
                 </option>
               ))}
             </select>

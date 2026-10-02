@@ -2,16 +2,30 @@
 
 import { useEffect, useOptimistic, useState, useTransition } from "react";
 import { deleteDrink, logDrink, type LogResult } from "@/app/actions";
-import { DRINK_TYPES, DRINK_TYPE_KEYS, formatUnits, type DrinkType } from "@/lib/drinks";
+import { formatUnits, type DrinkOption } from "@/lib/drinks";
 
 const TOAST_MS = 6000;
 
-function labelFor(type: DrinkType, qty: number) {
-  const d = DRINK_TYPES[type];
-  return `${qty > 1 ? `${qty}× ` : ""}${d.label} ${d.emoji}`;
-}
+export type LogForOption = { userId: string; name: string };
 
-export function LogDrink({ tonight, countLabel = "You tonight" }: { tonight: number; countLabel?: string }) {
+export function LogDrink({
+  groupId,
+  options,
+  meId,
+  members = [],
+  tonight,
+  countLabel = "You tonight",
+}: {
+  groupId: string;
+  /** The group's drink buttons (visible built-ins + owner-added) */
+  options: DrinkOption[];
+  meId: string;
+  /** Set for group owners: people they can log on behalf of */
+  members?: LogForOption[];
+  tonight: number;
+  countLabel?: string;
+}) {
+  const [forUserId, setForUserId] = useState(meId);
   const [qty, setQty] = useState(1);
   const [showMore, setShowMore] = useState(false);
   const [note, setNote] = useState("");
@@ -27,15 +41,19 @@ export function LogDrink({ tonight, countLabel = "You tonight" }: { tonight: num
   const [shownCount, addToCount] = useOptimistic(tonight, (count, n: number) => count + n);
   const [inFlight, addInFlight] = useOptimistic<string[], string>([], (list, label) => [...list, label]);
 
-  function log(type: DrinkType) {
+  function log(option: DrinkOption) {
     const form = new FormData();
-    form.set("type", type);
+    form.set("groupId", groupId);
+    form.set("forUserId", forUserId);
+    form.set("type", option.key);
     form.set("quantity", String(qty));
     form.set("note", note);
     // datetime-local has no zone; convert in the browser so the server gets an absolute time
     form.set("drunkAt", when ? new Date(when).toISOString() : "");
-    const label = labelFor(type, qty);
-    const sentQty = qty;
+    const forName = forUserId === meId ? "" : ` for ${members.find((m) => m.userId === forUserId)?.name ?? "them"}`;
+    const label = `${qty > 1 ? `${qty}× ` : ""}${option.label} ${option.emoji}${forName}`;
+    // Only your own drinks move your count
+    const sentQty = forUserId === meId ? qty : 0;
 
     // Reset straight away so the next tap starts clean
     setQty(1);
@@ -66,6 +84,26 @@ export function LogDrink({ tonight, countLabel = "You tonight" }: { tonight: num
           {countLabel}: <span className="font-semibold text-foam">{shownCount}</span>
         </p>
       </div>
+
+      {members.length > 1 && (
+        <label className="mb-3 flex items-center gap-3 text-sm">
+          <span className="shrink-0 text-muted">Logging for</span>
+          <select
+            value={forUserId}
+            onChange={(e) => setForUserId(e.target.value)}
+            className={`input py-2 ${forUserId === meId ? "" : "border-foam text-foam"}`}
+            aria-label="Logging for"
+          >
+            {[...members]
+              .sort((x, y) => (x.userId === meId ? -1 : y.userId === meId ? 1 : x.name.localeCompare(y.name)))
+              .map((m) => (
+                <option key={m.userId} value={m.userId}>
+                  {m.userId === meId ? "Me" : m.name}
+                </option>
+              ))}
+          </select>
+        </label>
+      )}
 
       <div className="mb-3 flex items-center gap-3">
         <span className="text-sm text-muted">How many</span>
@@ -119,22 +157,21 @@ export function LogDrink({ tonight, countLabel = "You tonight" }: { tonight: num
       )}
 
       <div className="grid grid-cols-4 gap-2">
-        {DRINK_TYPE_KEYS.map((key) => {
-          const d = DRINK_TYPES[key];
-          return (
-            <button
-              key={key}
-              type="button"
-              value={key}
-              onClick={() => log(key)}
-              className="flex flex-col items-center justify-center gap-0.5 rounded-xl border border-line bg-bg px-1 py-2.5 transition hover:border-foam/60 hover:bg-card-hi active:animate-pop"
-            >
-              <span className="text-2xl leading-none sm:text-3xl">{d.emoji}</span>
-              <span className="mt-1 w-full text-center text-xs leading-tight font-medium text-balance sm:text-sm">{d.label}</span>
-              <span className="text-[11px] text-dim">{formatUnits(d.units * qty)}u</span>
-            </button>
-          );
-        })}
+        {options.map((d) => (
+          <button
+            key={d.key}
+            type="button"
+            value={d.key}
+            onClick={() => log(d)}
+            className="flex flex-col items-center justify-center gap-0.5 rounded-xl border border-line bg-bg px-1 py-2.5 transition hover:border-foam/60 hover:bg-card-hi active:animate-pop"
+          >
+            <span className="text-2xl leading-none sm:text-3xl">{d.emoji}</span>
+            <span className="mt-1 w-full text-center text-xs leading-tight font-medium text-balance break-words sm:text-sm">
+              {d.label}
+            </span>
+            <span className="text-[11px] text-dim">{formatUnits(d.units * qty)}u</span>
+          </button>
+        ))}
       </div>
 
       {result?.error && inFlight.length === 0 && (
@@ -165,7 +202,7 @@ export function LogDrink({ tonight, countLabel = "You tonight" }: { tonight: num
                     onClick={() => {
                       const id = result.loggedId!;
                       startUndo(async () => {
-                        await deleteDrink(id);
+                        await deleteDrink(id, groupId);
                         setUndone(id);
                       });
                     }}

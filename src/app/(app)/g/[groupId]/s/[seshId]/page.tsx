@@ -10,7 +10,16 @@ import { RenameSeshForm, StartSeshForm } from "@/components/SeshForms";
 import { ShareRecap } from "@/components/ShareRecap";
 import { requireUser } from "@/lib/auth";
 import { formatUnits } from "@/lib/drinks";
-import { getSeshDrinks, getSeshLeaderboard, getSeshes, getUnassignedDrinks, requireGroup, requireSesh } from "@/lib/queries";
+import { getGroupCatalog } from "@/lib/catalog";
+import {
+  getGroupMembers,
+  getSeshDrinks,
+  getSeshLeaderboard,
+  getSeshes,
+  getUnassignedDrinks,
+  requireGroup,
+  requireSesh,
+} from "@/lib/queries";
 import { formatDuration, formatInTz } from "@/lib/time";
 
 export async function generateMetadata({ params }: PageProps<"/g/[groupId]/s/[seshId]">) {
@@ -29,11 +38,13 @@ export default async function SeshPage({ params }: PageProps<"/g/[groupId]/s/[se
   const isOwner = role === "owner";
   const live = sesh.endedAt === null;
 
-  const [board, items, allSeshes, loose] = await Promise.all([
+  const [board, items, allSeshes, loose, catalog, members] = await Promise.all([
     getSeshLeaderboard(sesh.id),
     getSeshDrinks(sesh.id),
     getSeshes(group.id),
     isOwner ? getUnassignedDrinks(group.id) : Promise.resolve([]),
+    getGroupCatalog(group.id),
+    isOwner && live ? getGroupMembers(group.id) : Promise.resolve([]),
   ]);
   const seshOptions = allSeshes.map((s) => ({ id: s.id, name: s.name }));
   const total = board.reduce((n, r) => n + r.drinks, 0);
@@ -80,7 +91,16 @@ export default async function SeshPage({ params }: PageProps<"/g/[groupId]/s/[se
         )}
       </div>
 
-      {live && <LogDrink tonight={board.find((r) => r.userId === me.id)?.drinks ?? 0} countLabel="You this sesh" />}
+      {live && (
+        <LogDrink
+          groupId={group.id}
+          options={catalog.options}
+          meId={me.id}
+          members={members.map((m) => ({ userId: m.userId, name: m.displayName }))}
+          tonight={board.find((r) => r.userId === me.id)?.drinks ?? 0}
+          countLabel="You this sesh"
+        />
+      )}
 
       {live && (
         <section className="card space-y-2 p-4">
@@ -109,6 +129,7 @@ export default async function SeshPage({ params }: PageProps<"/g/[groupId]/s/[se
           groupId={group.id}
           isOwner={isOwner}
           seshes={seshOptions}
+          options={catalog.options}
           showSesh={false}
           empty="No drinks in this sesh yet."
         />

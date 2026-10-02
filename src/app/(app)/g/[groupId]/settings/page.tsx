@@ -5,8 +5,10 @@ import { ConfirmButton } from "@/components/ConfirmButton";
 import { CopyButton } from "@/components/CopyButton";
 import { LiveRefresh } from "@/components/LiveRefresh";
 import { requireUser } from "@/lib/auth";
+import { getGroupCatalog } from "@/lib/catalog";
 import { getGroupMembers, requireGroup } from "@/lib/queries";
 import { GroupSettingsForm } from "./form";
+import { DrinksManager } from "./drinks";
 import { NicknameEditor } from "./nickname";
 
 export const metadata = { title: "Group settings" };
@@ -15,7 +17,7 @@ export default async function GroupSettingsPage({ params }: PageProps<"/g/[group
   const { groupId } = await params;
   const me = await requireUser(`/g/${groupId}/settings`);
   const { group, role } = await requireGroup(groupId, me.id);
-  const members = await getGroupMembers(group.id);
+  const [members, catalog] = await Promise.all([getGroupMembers(group.id), getGroupCatalog(group.id)]);
   const isOwner = role === "owner";
   const timezones = Intl.supportedValuesOf("timeZone");
   if (!timezones.includes(group.timezone)) timezones.unshift(group.timezone);
@@ -56,6 +58,14 @@ export default async function GroupSettingsPage({ params }: PageProps<"/g/[group
           name={group.name}
           timezone={group.timezone}
           timezones={timezones}
+        />
+      )}
+
+      {isOwner && (
+        <DrinksManager
+          groupId={group.id}
+          hidden={catalog.hidden}
+          customs={catalog.customs.map(({ id, label, emoji, units }) => ({ id, label, emoji, units }))}
         />
       )}
 

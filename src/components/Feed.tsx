@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { drinkInfo, drinkPhrase, formatUnits } from "@/lib/drinks";
+import { drinkDisplay, drinkPhrase, formatUnits, type DrinkOption } from "@/lib/drinks";
 import type { FeedItem } from "@/lib/queries";
 import { timeAgo } from "@/lib/time";
 import { Avatar } from "./Avatar";
@@ -12,6 +12,7 @@ export function Feed({
   groupId,
   isOwner = false,
   seshes = [],
+  options,
   showSesh = true,
   empty = "No drinks logged yet. Be the first.",
 }: {
@@ -20,6 +21,8 @@ export function Feed({
   groupId: string;
   isOwner?: boolean;
   seshes?: SeshOption[];
+  /** The group's drink catalogue, for changing a drink's type */
+  options?: DrinkOption[];
   showSesh?: boolean;
   empty?: string;
 }) {
@@ -29,7 +32,7 @@ export function Feed({
     <HideableRows>
       <ul className="divide-y divide-line">
         {items.map((d) => {
-          const info = drinkInfo(d.type);
+          const info = drinkDisplay({ type: d.type, label: d.label, emoji: d.drinkEmoji });
           return (
             <HideableRow key={d.id} id={d.id} className="flex items-center gap-3 px-4 py-2.5">
               <Link href={`/u/${d.username}`} prefetch={false}>
@@ -40,9 +43,9 @@ export function Feed({
                   <Link href={`/u/${d.username}`} prefetch={false} className="font-semibold hover:underline">
                     {d.displayName}
                   </Link>{" "}
-                  <span className="text-muted">had</span> {drinkPhrase(d.type, d.quantity)} {info.emoji}
+                  <span className="text-muted">had</span> {drinkPhrase(d)} {info.emoji}
                 </p>
-                {(d.note || (showSesh && d.seshId)) && (
+                {(d.note || d.loggedByName || (showSesh && d.seshId)) && (
                   <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted">
                     {showSesh && d.seshId && (
                       <Link
@@ -54,6 +57,7 @@ export function Feed({
                       </Link>
                     )}
                     {d.note && <span className="truncate">“{d.note}”</span>}
+                    {d.loggedByName && <span className="shrink-0 text-dim">added by {d.loggedByName}</span>}
                   </p>
                 )}
               </div>
@@ -62,7 +66,14 @@ export function Feed({
                 <span className="block">{formatUnits(d.units)}u</span>
               </span>
               {(d.userId === meId || isOwner) && (
-                <DrinkMenu drink={d} groupId={groupId} isOwner={isOwner} seshes={seshes} currentSeshId={d.seshId} />
+                <DrinkMenu
+                  drink={d}
+                  groupId={groupId}
+                  isOwner={isOwner}
+                  seshes={seshes}
+                  currentSeshId={d.seshId}
+                  options={options}
+                />
               )}
             </HideableRow>
           );

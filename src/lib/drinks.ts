@@ -26,17 +26,43 @@ export function drinkInfo(type: string) {
   return DRINK_TYPES[type as DrinkType] ?? DRINK_TYPES.other;
 }
 
+export function isBuiltinDrink(type: string): type is DrinkType {
+  return Object.hasOwn(DRINK_TYPES, type);
+}
+
+/** A button on the log-a-drink grid: a built-in, or one a group owner added ("c:<id>"). */
+export type DrinkOption = { key: string; label: string; emoji: string; units: number; custom: boolean };
+
+export const BUILTIN_OPTIONS: DrinkOption[] = DRINK_TYPE_KEYS.map((key) => ({ key, ...DRINK_TYPES[key], custom: false }));
+
+export const customDrinkKey = (id: string) => `c:${id}`;
+export const CUSTOM_KEY_RE = /^c:([0-9a-f-]{36})$/i;
+
+/**
+ * Name and emoji for a logged drink. Custom drinks carry their own (frozen at
+ * log time); built-ins come from the catalogue.
+ */
+export function drinkDisplay(d: { type: string; label?: string | null; emoji?: string | null }) {
+  if (d.label) return { label: d.label, emoji: d.emoji || "🥤" };
+  const info = drinkInfo(d.type);
+  return { label: info.label, emoji: info.emoji };
+}
+
 // How a single one reads in a sentence ("Dave had …"), where "a" + lowercase label doesn't work
 const PHRASES: Partial<Record<DrinkType, string>> = {
   asahi: "an Asahi",
   other: "something else",
 };
 
-/** "a pint", "an Asahi", "3× shot" */
-export function drinkPhrase(type: string, quantity: number) {
-  const info = drinkInfo(type);
-  if (quantity > 1) return `${quantity}× ${info.label.toLowerCase()}`;
-  return PHRASES[type as DrinkType] ?? `a ${info.label.toLowerCase()}`;
+/** "a pint", "an Asahi", "3× shot", "a Jägerbomb" */
+export function drinkPhrase(d: { type: string; label?: string | null; quantity: number }) {
+  if (d.label) {
+    // Owner-named drinks keep their capitalisation
+    return d.quantity > 1 ? `${d.quantity}× ${d.label}` : `${/^[aeiou]/i.test(d.label) ? "an" : "a"} ${d.label}`;
+  }
+  const info = drinkInfo(d.type);
+  if (d.quantity > 1) return `${d.quantity}× ${info.label.toLowerCase()}`;
+  return PHRASES[d.type as DrinkType] ?? `a ${info.label.toLowerCase()}`;
 }
 
 export function formatUnits(units: number) {

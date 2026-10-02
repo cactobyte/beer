@@ -50,6 +50,8 @@ export const groups = pgTable(
     // Bumped on anything that changes what a member sees (drinks, seshes,
     // members, chat). Open pages poll it and refresh when it moves.
     version: integer("version").notNull().default(0),
+    // Built-in drink keys the owner has hidden from this group's buttons
+    hiddenDrinks: text("hidden_drinks").array().notNull().default(sql`'{}'::text[]`),
     createdBy: uuid("created_by")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -93,12 +95,37 @@ export const drinks = pgTable(
     // at log time so catalogue changes never rewrite history.
     units: real("units").notNull(),
     note: text("note"),
+    // Name/emoji frozen at log time for group-defined drinks (type "c:<id>"),
+    // so history survives the drink being renamed or deleted. Null for built-ins.
+    label: text("label"),
+    emoji: text("emoji"),
+    // Set when a group owner logged this on the drinker's behalf
+    loggedBy: uuid("logged_by").references(() => users.id, { onDelete: "set null" }),
     drunkAt: timestamp("drunk_at", { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("drinks_user_drunk_at_idx").on(t.userId, t.drunkAt),
     check("drinks_quantity_range", sql`${t.quantity} between 1 and 20`),
+  ],
+);
+
+// Drinks a group owner added on top of the built-in catalogue
+export const groupDrinks = pgTable(
+  "group_drinks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    emoji: text("emoji").notNull(),
+    units: real("units").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("group_drinks_group_idx").on(t.groupId),
+    check("group_drinks_units_range", sql`${t.units} > 0 and ${t.units} <= 20`),
   ],
 );
 
@@ -186,3 +213,4 @@ export type Group = typeof groups.$inferSelect;
 export type Drink = typeof drinks.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type Sesh = typeof seshes.$inferSelect;
+export type GroupDrink = typeof groupDrinks.$inferSelect;

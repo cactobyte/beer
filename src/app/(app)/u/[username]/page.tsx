@@ -4,7 +4,7 @@ import { Avatar } from "@/components/Avatar";
 import { DrinkMenu } from "@/components/DrinkMenu";
 import { HideableRow, HideableRows } from "@/components/HideableRows";
 import { requireUser } from "@/lib/auth";
-import { drinkInfo, formatUnits } from "@/lib/drinks";
+import { drinkDisplay, formatUnits } from "@/lib/drinks";
 import { getUserByUsername, getUserHistory, getUserStats, sharesGroup } from "@/lib/queries";
 import { timeAgo } from "@/lib/time";
 
@@ -64,7 +64,7 @@ export default async function ProfilePage({ params }: PageProps<"/u/[username]">
         <section className="card space-y-2.5 p-5">
           <h2 className="mb-1 font-display text-lg font-semibold">Drink of choice</h2>
           {stats.byType.map((t) => {
-            const info = drinkInfo(t.type);
+            const info = drinkDisplay(t);
             return (
               <div key={t.type} className="flex items-center gap-3 text-sm">
                 <span className="w-6 text-center text-lg">{info.emoji}</span>
@@ -90,7 +90,7 @@ export default async function ProfilePage({ params }: PageProps<"/u/[username]">
           <HideableRows>
             <ul className="divide-y divide-line">
               {history.map((d) => {
-                const info = drinkInfo(d.type);
+                const info = drinkDisplay(d);
                 return (
                   <HideableRow key={d.id} id={d.id} className="flex items-center gap-3 px-5 py-2.5 text-sm">
                     <span className="text-xl">{info.emoji}</span>

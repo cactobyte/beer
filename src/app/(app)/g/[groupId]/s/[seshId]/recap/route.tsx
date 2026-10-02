@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { ImageResponse } from "next/og";
 import { db, schema } from "@/db";
 import { getUser } from "@/lib/auth";
-import { drinkInfo, formatUnits } from "@/lib/drinks";
+import { drinkDisplay, formatUnits } from "@/lib/drinks";
 import { getSeshDrinks, getSeshLeaderboard, isMember, requireSesh } from "@/lib/queries";
 import { formatDuration, formatInTz } from "@/lib/time";
 
@@ -19,9 +19,13 @@ export async function GET(_req: Request, ctx: RouteContext<"/g/[groupId]/s/[sesh
   const [board, items] = await Promise.all([getSeshLeaderboard(sesh.id), getSeshDrinks(sesh.id)]);
   const total = board.reduce((n, r) => n + r.drinks, 0);
   const units = board.reduce((n, r) => n + r.units, 0);
-  const byType = new Map<string, number>();
-  for (const d of items) byType.set(d.type, (byType.get(d.type) ?? 0) + d.quantity);
-  const top = [...byType.entries()].sort((a, b) => b[1] - a[1])[0];
+  const byType = new Map<string, { label: string; count: number }>();
+  for (const d of items) {
+    const entry = byType.get(d.type) ?? { label: drinkDisplay({ type: d.type, label: d.label }).label, count: 0 };
+    entry.count += d.quantity;
+    byType.set(d.type, entry);
+  }
+  const top = [...byType.values()].sort((a, b) => b.count - a.count)[0];
   const end = sesh.endedAt ?? new Date();
   const when = formatInTz(sesh.startedAt, group.timezone, { weekday: "long", day: "numeric", month: "long" });
 
@@ -113,7 +117,7 @@ export async function GET(_req: Request, ctx: RouteContext<"/g/[groupId]/s/[sesh
           >
             <div style={{ display: "flex", fontSize: 32, color: "#a8998a" }}>Drink of the night</div>
             <div style={{ display: "flex", fontSize: 60, fontWeight: 800, color: "#fbbf24" }}>
-              {`${drinkInfo(top[0]).label} ×${top[1]}`}
+              {`${top.label} ×${top.count}`}
             </div>
           </div>
         )}

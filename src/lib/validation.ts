@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { DRINK_TYPE_KEYS } from "./drinks";
+// Built-in key ("pint") or a group's own drink ("c:<uuid>"); checked against the catalogue server-side
+const drinkType = z.string().regex(/^(c:[0-9a-f-]{36}|[a-z_]{1,30})$/i, "Unknown drink");
 
 export const username = z
   .string()
@@ -25,7 +26,7 @@ export const timezone = z
   }, "Unknown timezone");
 
 export const logDrink = z.object({
-  type: z.enum(DRINK_TYPE_KEYS as [string, ...string[]]),
+  type: drinkType,
   quantity: z.coerce.number().int().min(1).max(20),
   note: z
     .string()
@@ -72,7 +73,7 @@ export const messageBody = z
 export const seshName = z.string().trim().min(1, "Name the sesh").max(40, "Max 40 characters");
 
 export const editDrink = z.object({
-  type: z.enum(DRINK_TYPE_KEYS as [string, ...string[]]),
+  type: drinkType,
   quantity: z.coerce.number().int().min(1).max(20),
   note: z
     .string()
@@ -93,4 +94,14 @@ export const editDrink = z.object({
     }
     return d;
   }),
+});
+
+export const groupDrink = z.object({
+  label: z.string().trim().min(1, "Name it").max(24, "Max 24 characters"),
+  emoji: z.string().trim().min(1, "Pick an emoji").max(16, "Just an emoji or two"),
+  units: z.coerce
+    .number({ message: "Units must be a number" })
+    .gt(0, "More than 0 units")
+    .max(20, "Max 20 units")
+    .transform((u) => Math.round(u * 10) / 10),
 });

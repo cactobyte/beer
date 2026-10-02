@@ -2,10 +2,19 @@
 
 import { useState, useTransition } from "react";
 import { assignDrinks } from "@/app/actions";
-import { drinkInfo } from "@/lib/drinks";
+import { drinkDisplay } from "@/lib/drinks";
 import { timeAgo } from "@/lib/time";
 
-type Item = { id: string; type: string; quantity: number; drunkAt: Date; displayName: string; note: string | null };
+type Item = {
+  id: string;
+  type: string;
+  label: string | null;
+  drinkEmoji: string | null;
+  quantity: number;
+  drunkAt: Date;
+  displayName: string;
+  note: string | null;
+};
 
 /** Owner tool: tick drinks and add them to a sesh in one go. */
 export function DrinkPicker({ groupId, seshId, items }: { groupId: string; seshId: string; items: Item[] }) {
@@ -48,7 +57,7 @@ export function DrinkPicker({ groupId, seshId, items }: { groupId: string; seshI
       </div>
       <ul className="max-h-80 divide-y divide-line overflow-y-auto">
         {items.map((d) => {
-          const info = drinkInfo(d.type);
+          const info = drinkDisplay({ type: d.type, label: d.label, emoji: d.drinkEmoji });
           return (
             <li key={d.id}>
               <label className="flex cursor-pointer items-center gap-3 px-4 py-2 text-sm hover:bg-card-hi">

@@ -8,7 +8,8 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import { createSession, destroySession, requireUser } from "@/lib/auth";
-import { DRINK_TYPES, EMOJIS, type DrinkType } from "@/lib/drinks";
+import { resolveDrinkType } from "@/lib/catalog";
+import { EMOJIS, isBuiltinDrink } from "@/lib/drinks";
 import { getMessageById, isMember, requireGroup, requireSesh, type ChatMessage } from "@/lib/queries";
 import * as v from "@/lib/validation";
 import type { FormState } from "@/lib/validation";
@@ -279,17 +280,38 @@ export async function logDrink(_: LogResult, form: FormData): Promise<LogResult>
   const parsed = v.logDrink.safeParse(Object.fromEntries(form));
   if (!parsed.success) return { error: v.firstError(parsed.error) };
   const { type, quantity, note, drunkAt } = parsed.data;
-  const info = DRINK_TYPES[type as DrinkType];
+
+  // Logged from a group page; owners may log on behalf of a member
+  const groupId = String(form.get("groupId") ?? "");
+  const forUserId = String(form.get("forUserId") ?? "") || me.id;
+  if (!/^[0-9a-f-]{36}$/i.test(groupId)) return { error: "Missing group" };
+  const roles = await db
+    .select({ userId: groupMembers.userId, role: groupMembers.role, nickname: groupMembers.nickname, name: users.displayName })
+    .from(groupMembers)
+    .innerJoin(users, eq(users.id, groupMembers.userId))
+    .where(and(eq(groupMembers.groupId, groupId), inArray(groupMembers.userId, [me.id, forUserId])));
+  const mine = roles.find((r) => r.userId === me.id);
+  const target = roles.find((r) => r.userId === forUserId);
+  if (!mine) return { error: "You're not in this group" };
+  if (forUserId !== me.id && (mine.role !== "owner" || !target)) {
+    return { error: "Only the group owner can log for someone else" };
+  }
+
+  const resolved = await resolveDrinkType(type, groupId);
+  if (!resolved) return { error: "That drink doesn't exist any more" };
 
   const [row] = await db
     .insert(drinks)
     .values({
-      userId: me.id,
+      userId: forUserId,
       type,
       quantity,
       note,
       drunkAt,
-      units: Math.round(info.units * quantity * 10) / 10,
+      units: Math.round(resolved.units * quantity * 10) / 10,
+      label: resolved.label,
+      emoji: resolved.emoji,
+      loggedBy: forUserId === me.id ? null : me.id,
     })
     .returning({ id: drinks.id });
 
@@ -297,7 +319,7 @@ export async function logDrink(_: LogResult, form: FormData): Promise<LogResult>
   const live = await db
     .select({ seshId: seshes.id, groupId: seshes.groupId })
     .from(seshes)
-    .innerJoin(groupMembers, and(eq(groupMembers.groupId, seshes.groupId), eq(groupMembers.userId, me.id)))
+    .innerJoin(groupMembers, and(eq(groupMembers.groupId, seshes.groupId), eq(groupMembers.userId, forUserId)))
     .where(and(isNull(seshes.endedAt), lte(seshes.startedAt, drunkAt)));
   if (live.length) {
     await db
@@ -306,11 +328,12 @@ export async function logDrink(_: LogResult, form: FormData): Promise<LogResult>
       .onConflictDoNothing();
   }
 
-  await touchUserGroups(me.id);
+  await touchUserGroups(forUserId);
   revalidatePath("/", "layout");
+  const forName = forUserId === me.id ? "" : ` for ${target?.nickname ?? target?.name}`;
   return {
     loggedId: row.id,
-    label: `${quantity > 1 ? `${quantity}× ` : ""}${info.label} ${info.emoji}`,
+    label: `${quantity > 1 ? `${quantity}× ` : ""}${resolved.display}${forName}`,
     // Lets the client tell two identical logs apart
     at: Date.now(),
   };
@@ -351,19 +374,85 @@ export async function editDrink(drinkId: string, groupId: string | undefined, _:
   if (!parsed.success) return { error: v.firstError(parsed.error) };
   const { type, quantity, note, drunkAt } = parsed.data;
 
+  const [old] = await db.select().from(drinks).where(eq(drinks.id, drinkId)).limit(1);
+  if (!old) return { error: "That drink's gone" };
+
+  // Same type: keep its frozen per-drink units and name (they may have come
+  // from a group drink that's since changed). New type: look it up.
+  let perDrink = old.units / old.quantity;
+  let label = old.label;
+  let emoji = old.emoji;
+  if (type !== old.type) {
+    const resolved = await resolveDrinkType(type, groupId);
+    if (!resolved) return { error: "That drink doesn't exist any more" };
+    perDrink = resolved.units;
+    label = resolved.label;
+    emoji = resolved.emoji;
+  }
+
   await db
     .update(drinks)
-    .set({
-      type,
-      quantity,
-      note,
-      drunkAt,
-      units: Math.round(DRINK_TYPES[type as DrinkType].units * quantity * 10) / 10,
-    })
+    .set({ type, quantity, note, drunkAt, label, emoji, units: Math.round(perDrink * quantity * 10) / 10 })
     .where(eq(drinks.id, drinkId));
   await touchUserGroups(drinker);
   revalidatePath("/", "layout");
   return { ok: "Saved" };
+}
+
+// ─── Group drink catalogue (owner) ───────────────────────────────────────────
+
+export async function addGroupDrink(groupId: string, _: FormState, form: FormData): Promise<FormState> {
+  await requireOwner(groupId);
+  const parsed = v.groupDrink.safeParse(Object.fromEntries(form));
+  if (!parsed.success) return { error: v.firstError(parsed.error) };
+  const [{ n }] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(schema.groupDrinks)
+    .where(eq(schema.groupDrinks.groupId, groupId));
+  if (n >= 30) return { error: "That's 30 drinks already, delete one first" };
+
+  await db.insert(schema.groupDrinks).values({ groupId, ...parsed.data });
+  await touchGroup(groupId);
+  revalidatePath(`/g/${groupId}`, "layout");
+  return { ok: `Added ${parsed.data.label}` };
+}
+
+/** Changes apply to future logs; drinks already logged keep the name and units they had. */
+export async function updateGroupDrink(groupId: string, drinkId: string, _: FormState, form: FormData): Promise<FormState> {
+  await requireOwner(groupId);
+  const parsed = v.groupDrink.safeParse(Object.fromEntries(form));
+  if (!parsed.success) return { error: v.firstError(parsed.error) };
+  await db
+    .update(schema.groupDrinks)
+    .set(parsed.data)
+    .where(and(eq(schema.groupDrinks.id, drinkId), eq(schema.groupDrinks.groupId, groupId)));
+  await touchGroup(groupId);
+  revalidatePath(`/g/${groupId}`, "layout");
+  return { ok: "Saved" };
+}
+
+export async function deleteGroupDrink(groupId: string, drinkId: string) {
+  await requireOwner(groupId);
+  await db
+    .delete(schema.groupDrinks)
+    .where(and(eq(schema.groupDrinks.id, drinkId), eq(schema.groupDrinks.groupId, groupId)));
+  await touchGroup(groupId);
+  revalidatePath(`/g/${groupId}`, "layout");
+}
+
+export async function setBuiltinHidden(groupId: string, key: string, hidden: boolean) {
+  await requireOwner(groupId);
+  if (!isBuiltinDrink(key)) return;
+  await db
+    .update(groups)
+    .set({
+      hiddenDrinks: hidden
+        ? sql`array_append(array_remove(${groups.hiddenDrinks}, ${key}), ${key})`
+        : sql`array_remove(${groups.hiddenDrinks}, ${key})`,
+    })
+    .where(eq(groups.id, groupId));
+  await touchGroup(groupId);
+  revalidatePath(`/g/${groupId}`, "layout");
 }
 
 // ─── Seshes ──────────────────────────────────────────────────────────────────

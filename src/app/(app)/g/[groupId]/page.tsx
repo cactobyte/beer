@@ -9,6 +9,7 @@ import { RememberGroup } from "@/components/RememberGroup";
 import { requireUser } from "@/lib/auth";
 import { PERIODS, parsePeriod } from "@/lib/drinks";
 import { formatInTz, timeAgo } from "@/lib/time";
+import { getGroupCatalog } from "@/lib/catalog";
 import { getGroupFeed, getLatestMessage, getLeaderboard, getMyTonight, getSeshes, requireGroup } from "@/lib/queries";
 import { StartSeshForm } from "@/components/SeshForms";
 
@@ -26,12 +27,13 @@ export default async function GroupPage({ params, searchParams }: PageProps<"/g/
   const { group, role } = await requireGroup(groupId, me.id);
   const isOwner = role === "owner";
 
-  const [board, feed, tonight, lastMessage, seshes] = await Promise.all([
+  const [board, feed, tonight, lastMessage, seshes, catalog] = await Promise.all([
     getLeaderboard(group.id, group.timezone, period),
     getGroupFeed(group.id),
     getMyTonight(me.id, group.timezone),
     getLatestMessage(group.id),
     getSeshes(group.id, 20),
+    getGroupCatalog(group.id),
   ]);
   const liveSesh = seshes.find((x) => x.endedAt === null);
   const pastSeshes = seshes.filter((x) => x.endedAt !== null);
@@ -100,7 +102,13 @@ export default async function GroupPage({ params, searchParams }: PageProps<"/g/
         </section>
       )}
 
-      <LogDrink tonight={tonight} />
+      <LogDrink
+        groupId={group.id}
+        options={catalog.options}
+        meId={me.id}
+        members={isOwner ? board.map((r) => ({ userId: r.userId, name: r.displayName })) : []}
+        tonight={tonight}
+      />
 
       <section className="card overflow-hidden">
         <div className="border-b border-line p-3">
@@ -116,7 +124,7 @@ export default async function GroupPage({ params, searchParams }: PageProps<"/g/
 
       <section className="card overflow-hidden">
         <h2 className="border-b border-line px-4 py-3 font-display text-lg font-semibold">Latest</h2>
-        <Feed items={feed} meId={me.id} groupId={group.id} isOwner={isOwner} seshes={seshOptions} />
+        <Feed items={feed} meId={me.id} groupId={group.id} isOwner={isOwner} seshes={seshOptions} options={catalog.options} />
       </section>
 
       {pastSeshes.length > 0 && (

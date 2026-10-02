@@ -50,6 +50,13 @@
       "when": 1790831217577,
       "tag": "0006_merge_vodka_redbull",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790924799171,
+      "tag": "0007_custom_drinks",
+      "breakpoints": true
     }
   ]
 }
